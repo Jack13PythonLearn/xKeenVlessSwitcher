@@ -4,7 +4,7 @@ const { URL } = require('url');
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
-const { exec, spawn } = require('child_process');
+const { exec, execSync, spawn } = require('child_process');
 const zlib = require('zlib');
 const os = require('os');
 
@@ -21,7 +21,7 @@ if (!fs.existsSync(path.dirname(DATA_FILE))) {
 }
 
 // Read application version from package.json
-let appVersion = '2.0.1';
+let appVersion = '2.0.2';
 try {
   const pkgPath = path.join(__dirname, 'package.json');
   if (fs.existsSync(pkgPath)) {
@@ -491,6 +491,296 @@ function measureTcpLatency(host, port, timeout = 3500) {
       }
     }
   });
+}
+
+// Helper: Locate Xray binary on router / host system
+let cachedXrayPath = undefined;
+function findXrayPath() {
+  if (cachedXrayPath !== undefined) return cachedXrayPath;
+  const candidates = [
+    '/opt/sbin/xray',
+    '/opt/bin/xray',
+    '/usr/sbin/xray',
+    '/usr/bin/xray',
+    '/usr/local/bin/xray'
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) {
+        cachedXrayPath = c;
+        return c;
+      }
+    } catch (e) {}
+  }
+  try {
+    const whichRes = execSync('which xray 2>/dev/null', { timeout: 1000 }).toString().trim();
+    if (whichRes && fs.existsSync(whichRes)) {
+      cachedXrayPath = whichRes;
+      return whichRes;
+    }
+  } catch (e) {}
+
+  cachedXrayPath = null;
+  return null;
+}
+
+// Helper: Dynamically find an available TCP port on localhost for test instance
+function getAvailableTestPort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+    srv.on('error', reject);
+  });
+}
+
+// Concurrency limiter for isolated Xray proxy tests (max 2 concurrent processes on router)
+let activeProxyChecks = 0;
+const proxyCheckQueue = [];
+
+function runWithProxyConcurrency(fn) {
+  return new Promise((resolve, reject) => {
+    const execute = async () => {
+      activeProxyChecks++;
+      try {
+        const res = await fn();
+        resolve(res);
+      } catch (err) {
+        reject(err);
+      } finally {
+        activeProxyChecks--;
+        if (proxyCheckQueue.length > 0) {
+          const next = proxyCheckQueue.shift();
+          next();
+        }
+      }
+    };
+
+    if (activeProxyChecks < 2) {
+      execute();
+    } else {
+      proxyCheckQueue.push(execute);
+    }
+  });
+}
+
+// Helper: Real proxy tunnel check via isolated ephemeral Xray instance
+async function measureProxyHealth(outboundContent, options = {}) {
+  const xrayBin = findXrayPath();
+  if (!xrayBin) {
+    return { ok: false, error: 'Исполняемый файл Xray не найден', skipProxy: true };
+  }
+
+  if (!outboundContent || typeof outboundContent !== 'string') {
+    return { ok: false, error: 'Отсутствует конфигурация outbound', skipProxy: true };
+  }
+
+  let parsed;
+  try {
+    parsed = parseJsonWithComments(outboundContent);
+  } catch (e) {
+    return { ok: false, error: 'Некорректный синтаксис JSON outbound', skipProxy: true };
+  }
+
+  const outbounds = Array.isArray(parsed.outbounds) ? parsed.outbounds : [parsed];
+  if (!outbounds || outbounds.length === 0) {
+    return { ok: false, error: 'В конфигурации нет секции outbounds', skipProxy: true };
+  }
+
+  return runWithProxyConcurrency(async () => {
+    const timeout = options.timeout || 4000;
+    const canaryUrl = options.canaryUrl || 'http://cp.cloudflare.com/generate_204';
+
+    let testPort;
+    try {
+      testPort = await getAvailableTestPort();
+    } catch (err) {
+      return { ok: false, error: 'Не удалось выделить порт: ' + err.message };
+    }
+
+    const testConfigFile = path.join(
+      os.tmpdir(),
+      `xray-health-${Date.now()}-${Math.floor(Math.random() * 100000)}.json`
+    );
+
+    const testConfig = {
+      log: { loglevel: 'none' },
+      inbounds: [
+        {
+          tag: 'test-http-in',
+          port: testPort,
+          listen: '127.0.0.1',
+          protocol: 'http'
+        }
+      ],
+      outbounds: outbounds
+    };
+
+    try {
+      fs.writeFileSync(testConfigFile, JSON.stringify(testConfig));
+    } catch (err) {
+      return { ok: false, error: 'Ошибка записи тестового конфига: ' + err.message };
+    }
+
+    let child;
+    try {
+      child = spawn(xrayBin, ['run', '-c', testConfigFile], {
+        stdio: ['ignore', 'ignore', 'ignore']
+      });
+    } catch (err) {
+      try { fs.unlinkSync(testConfigFile); } catch (e) {}
+      return { ok: false, error: 'Ошибка запуска Xray: ' + err.message };
+    }
+
+    const cleanup = () => {
+      try { child.kill('SIGKILL'); } catch (e) {}
+      try { fs.unlinkSync(testConfigFile); } catch (e) {}
+    };
+
+    return new Promise((resolve) => {
+      let settled = false;
+
+      const finish = (res) => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          resolve(res);
+        }
+      };
+
+      child.on('error', (err) => {
+        finish({ ok: false, error: 'Сбой процесса Xray: ' + err.message });
+      });
+
+      child.on('exit', (code) => {
+        if (!settled && code !== 0 && code !== null) {
+          finish({ ok: false, error: `Xray завершился с кодом ошибки ${code}` });
+        }
+      });
+
+      // Short delay (250ms) to allow Xray to bind local HTTP inbound port
+      setTimeout(() => {
+        if (settled) return;
+
+        let canaryParsed;
+        try {
+          canaryParsed = new URL(canaryUrl);
+        } catch (e) {
+          return finish({ ok: false, error: 'Некорректный Canary URL' });
+        }
+
+        const t0 = Date.now();
+        const req = http.request(
+          {
+            host: '127.0.0.1',
+            port: testPort,
+            method: 'GET',
+            path: canaryUrl,
+            headers: { Host: canaryParsed.host },
+            timeout: timeout
+          },
+          (res) => {
+            const latency = Date.now() - t0;
+            res.resume();
+            if (res.statusCode >= 200 && res.statusCode < 400) {
+              finish({ ok: true, latency, statusCode: res.statusCode });
+            } else {
+              finish({
+                ok: false,
+                latency: null,
+                statusCode: res.statusCode,
+                error: `Прокси вернул HTTP ${res.statusCode} (трафик сброшен сервером)`
+              });
+            }
+          }
+        );
+
+        req.on('timeout', () => {
+          req.destroy();
+          finish({ ok: false, error: 'Таймаут сквозного ответа через туннель' });
+        });
+
+        req.on('error', (err) => {
+          finish({ ok: false, error: 'Сбой соединения через прокси: ' + (err.message || 'ошибка сети') });
+        });
+
+        req.end();
+      }, 250);
+    });
+  });
+}
+
+// Helper: Comprehensive connection health check (TCP handshake + real proxy tunnel test)
+async function measureConnectionHealth(conn, options = {}) {
+  if (!conn) {
+    return { ok: false, error: 'Подключение не указано', status: 'unreachable', latency: null };
+  }
+
+  const timeout = options.timeout || 3500;
+
+  // Step 1: TCP handshake to destination host:port
+  const tcpRes = await measureTcpLatency(conn.serverAddress, conn.serverPort, Math.min(timeout, 3000));
+  if (!tcpRes.ok) {
+    return {
+      ok: false,
+      latency: null,
+      tcpLatency: null,
+      status: 'unreachable',
+      checkType: 'tcp_failed',
+      error: tcpRes.error || 'Порт сервера недоступен'
+    };
+  }
+
+  // Step 2: Real proxy check (if Xray is installed on router and outbound JSON is present)
+  const xrayBin = findXrayPath();
+  if (xrayBin && conn.outboundContent) {
+    const proxyRes = await measureProxyHealth(conn.outboundContent, {
+      timeout: timeout,
+      canaryUrl: options.canaryUrl
+    });
+
+    if (proxyRes.ok) {
+      return {
+        ok: true,
+        latency: proxyRes.latency,
+        tcpLatency: tcpRes.latency,
+        status: 'ok',
+        checkType: 'proxy',
+        statusCode: proxyRes.statusCode
+      };
+    } else if (proxyRes.skipProxy) {
+      // If outbound could not be tested due to config formatting, fall back to TCP
+      return {
+        ok: true,
+        latency: tcpRes.latency,
+        tcpLatency: tcpRes.latency,
+        status: 'ok',
+        checkType: 'tcp',
+        warning: proxyRes.error
+      };
+    } else {
+      // Proxy failed: host TCP was alive, but tunnel rejected or dropped traffic!
+      return {
+        ok: false,
+        latency: null,
+        tcpLatency: tcpRes.latency,
+        status: 'unreachable',
+        checkType: 'proxy_failed',
+        error: proxyRes.error || 'Прокси не пропускает трафик'
+      };
+    }
+  }
+
+  // Fallback to TCP ping if Xray binary is not installed in environment
+  return {
+    ok: true,
+    latency: tcpRes.latency,
+    tcpLatency: tcpRes.latency,
+    status: 'ok',
+    checkType: 'tcp'
+  };
 }
 
 // Helper: Sleep
@@ -1026,6 +1316,8 @@ function loadData() {
             countryName: c.countryName || null,
             lastPing: c.lastPing !== undefined ? c.lastPing : null,
             lastPingStatus: c.lastPingStatus || null,
+            lastPingError: c.lastPingError || null,
+            lastPingType: c.lastPingType || null,
             lastPingCheckedAt: c.lastPingCheckedAt || null,
             createdAt: c.createdAt || new Date().toISOString()
           };
@@ -1280,11 +1572,11 @@ async function failoverTick() {
 
     if (!isCurrentlyOnBackup) {
       // Normal state (Primary active): check if Primary VLESS / foreign internet works
-      const primPing = await measureTcpLatency(primaryConn.serverAddress, primaryConn.serverPort, 3500);
+      const primPing = await measureConnectionHealth(primaryConn, { timeout: 3500, canaryUrl: fo.canaryUrl });
       let healthy = primPing.ok;
 
-      // If TCP socket opened, also test Canary URL
-      if (healthy && fo.canaryUrl) {
+      // If TCP socket opened but proxy check was skipped, also test Canary URL
+      if (healthy && fo.canaryUrl && primPing.checkType !== 'proxy') {
         const canaryRes = await checkCanary(fo.canaryUrl, 3500);
         healthy = canaryRes.ok;
       }
@@ -1319,7 +1611,7 @@ async function failoverTick() {
       }
     } else {
       // Backup state: probe if Primary connection is unblocked
-      const primPing = await measureTcpLatency(primaryConn.serverAddress, primaryConn.serverPort, 3500);
+      const primPing = await measureConnectionHealth(primaryConn, { timeout: 3500, canaryUrl: fo.canaryUrl });
 
       if (primPing.ok) {
         fo.consecutiveSuccesses = (fo.consecutiveSuccesses || 0) + 1;
@@ -1465,11 +1757,11 @@ async function autoFailoverTick() {
 
     if (!isCurrentlyOnBackup) {
       // Штатный режим: проверяем основное/текущее подключение
-      const primPing = await measureTcpLatency(primaryConn.serverAddress, primaryConn.serverPort, 3000);
+      const primPing = await measureConnectionHealth(primaryConn, { timeout: 3000, canaryUrl: af.canaryUrl });
       let healthy = primPing.ok;
 
-      // Если сокет ответил, контрольно проверяем сквозной запрос
-      if (healthy && af.canaryUrl) {
+      // Если сокет ответил, но сквозной прокси не проверялся, контрольно проверяем сквозной запрос
+      if (healthy && af.canaryUrl && primPing.checkType !== 'proxy') {
         const canaryRes = await checkCanary(af.canaryUrl, 3000);
         healthy = canaryRes.ok;
       }
@@ -1492,13 +1784,14 @@ async function autoFailoverTick() {
             return;
           }
 
-          // Параллельный опрос всех кандидатов по TCP
-          const probePromises = candidateConns.map(async (c) => {
-            const res = await measureTcpLatency(c.serverAddress, c.serverPort, 2500);
-            return { conn: c, ok: res.ok, latency: res.latency };
-          });
-          const results = await Promise.all(probePromises);
-          const alive = results.filter(r => r.ok);
+          // Опрос кандидатов с измерением реальной доступности туннеля
+          const alive = [];
+          for (const c of candidateConns) {
+            const res = await measureConnectionHealth(c, { timeout: 2500, canaryUrl: af.canaryUrl });
+            if (res.ok) {
+              alive.push({ conn: c, latency: res.latency });
+            }
+          }
 
           if (alive.length === 0) {
             af.lastLog = `Сбой основного! Все серверы из пула (${candidateConns.length}) также недоступны`;
@@ -1543,7 +1836,7 @@ async function autoFailoverTick() {
     } else {
       // Режим резерва: проверяем восстановление основного подключения
       if (af.autoReturn) {
-        const primPing = await measureTcpLatency(primaryConn.serverAddress, primaryConn.serverPort, 3000);
+        const primPing = await measureConnectionHealth(primaryConn, { timeout: 3000, canaryUrl: af.canaryUrl });
         if (primPing.ok) {
           af.consecutiveSuccesses = (af.consecutiveSuccesses || 0) + 1;
           af.lastLog = `Основной сервер "${primaryConn.name}" отвечает (${af.consecutiveSuccesses}/${af.recoveryThreshold || 3}, пинг ${primPing.latency} ms)`;
@@ -2235,14 +2528,18 @@ const server = http.createServer(async (req, res) => {
 
           // Test ping of active connection with new routing
           await sleep(1200);
-          const pr = await measureTcpLatency(conn.serverAddress, conn.serverPort, 3500);
+          const pr = await measureConnectionHealth(conn, { timeout: 3500 });
           conn.lastPing = pr.ok ? pr.latency : null;
           conn.lastPingStatus = pr.ok ? 'ok' : 'unreachable';
+          conn.lastPingError = pr.error || null;
+          conn.lastPingType = pr.checkType || 'tcp';
           conn.lastPingCheckedAt = new Date().toISOString();
           pingResult = {
             ok: pr.ok,
             ping: conn.lastPing,
             status: conn.lastPingStatus,
+            checkType: conn.lastPingType,
+            error: conn.lastPingError,
             latencyStr: pr.ok ? `${conn.lastPing} ms` : 'Недоступен'
           };
         }
@@ -2320,9 +2617,11 @@ const server = http.createServer(async (req, res) => {
 
       // Measure connectivity right away
       const conn = result.conn;
-      const pingRes = await measureTcpLatency(conn.serverAddress, conn.serverPort, 3500);
+      const pingRes = await measureConnectionHealth(conn, { timeout: 3500 });
       conn.lastPing = pingRes.ok ? pingRes.latency : null;
       conn.lastPingStatus = pingRes.ok ? 'ok' : 'unreachable';
+      conn.lastPingError = pingRes.error || null;
+      conn.lastPingType = pingRes.checkType || 'tcp';
       conn.lastPingCheckedAt = new Date().toISOString();
 
       // Update failover state if manual activation occurs
@@ -2379,6 +2678,8 @@ const server = http.createServer(async (req, res) => {
           ok: pingRes.ok,
           ping: conn.lastPing,
           status: conn.lastPingStatus,
+          checkType: conn.lastPingType,
+          error: conn.lastPingError,
           latencyStr: pingRes.ok ? `${conn.lastPing} ms` : 'Недоступен'
         }
       });
@@ -2387,7 +2688,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // POST /api/connections/:id/ping - Check single connection availability directly via TCP
+  // POST /api/connections/:id/ping - Check single connection availability (TCP handshake + real proxy tunnel)
   if (urlParts.startsWith('/api/connections/') && urlParts.endsWith('/ping') && req.method === 'POST') {
     const id = urlParts.replace('/api/connections/', '').replace('/ping', '');
     const data = loadData();
@@ -2398,10 +2699,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const pingResult = await measureTcpLatency(conn.serverAddress, conn.serverPort, 3500);
+      const pingResult = await measureConnectionHealth(conn, { timeout: 3500 });
 
       conn.lastPing = pingResult.ok ? pingResult.latency : null;
       conn.lastPingStatus = pingResult.ok ? 'ok' : 'unreachable';
+      conn.lastPingError = pingResult.error || null;
+      conn.lastPingType = pingResult.checkType || 'tcp';
       conn.lastPingCheckedAt = new Date().toISOString();
 
       if (!conn.countryCode && conn.serverAddress) {
@@ -2421,6 +2724,8 @@ const server = http.createServer(async (req, res) => {
         ok: pingResult.ok,
         ping: conn.lastPing,
         status: conn.lastPingStatus,
+        checkType: conn.lastPingType,
+        error: conn.lastPingError,
         latencyStr: pingResult.ok ? `${conn.lastPing} ms` : 'Недоступен',
         checkedAt: conn.lastPingCheckedAt,
         countryCode: conn.countryCode,
@@ -2431,7 +2736,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // POST /api/connections/ping-all - Check all connections concurrently without touching service
+  // POST /api/connections/ping-all - Check all connections with concurrency limiter without touching service
   if (urlParts === '/api/connections/ping-all' && req.method === 'POST') {
     const data = loadData();
     if (!data.connections || data.connections.length === 0) {
@@ -2439,10 +2744,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const pingPromises = data.connections.map(async (conn) => {
-        const pingResult = await measureTcpLatency(conn.serverAddress, conn.serverPort, 3500);
+      const results = [];
+      for (const conn of data.connections) {
+        const pingResult = await measureConnectionHealth(conn, { timeout: 3500 });
         conn.lastPing = pingResult.ok ? pingResult.latency : null;
         conn.lastPingStatus = pingResult.ok ? 'ok' : 'unreachable';
+        conn.lastPingError = pingResult.error || null;
+        conn.lastPingType = pingResult.checkType || 'tcp';
         conn.lastPingCheckedAt = new Date().toISOString();
 
         if (!conn.countryCode && conn.serverAddress) {
@@ -2455,19 +2763,20 @@ const server = http.createServer(async (req, res) => {
           } catch (e) {}
         }
 
-        return {
+        results.push({
           id: conn.id,
           ok: pingResult.ok,
           ping: conn.lastPing,
           status: conn.lastPingStatus,
+          checkType: conn.lastPingType,
+          error: conn.lastPingError,
           latencyStr: pingResult.ok ? `${conn.lastPing} ms` : 'Недоступен',
           checkedAt: conn.lastPingCheckedAt,
           countryCode: conn.countryCode,
           countryName: conn.countryName
-        };
-      });
+        });
+      }
 
-      const results = await Promise.all(pingPromises);
       saveData(data);
 
       return sendJson(res, 200, {

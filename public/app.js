@@ -272,9 +272,15 @@ function renderConnections() {
     if (isChecking) {
       pingHtml = `<span class="ping-badge ping-loading"><span class="spin-icon">⏳</span> Проверка...</span>`;
     } else if (conn.lastPingStatus === 'ok' && conn.lastPing !== null) {
-      pingHtml = `<span class="ping-badge ping-ok" title="Последняя проверка: ${formatTime(conn.lastPingCheckedAt)}">● ${conn.lastPing} ms</span>`;
+      const isProxy = conn.lastPingType === 'proxy';
+      const checkTitle = (isProxy ? 'Сквозной туннель подтверждён' : 'TCP доступен') +
+        (conn.lastPingCheckedAt ? ` • Проверено: ${formatTime(conn.lastPingCheckedAt)}` : '');
+      pingHtml = `<span class="ping-badge ping-ok" title="${escapeHtml(checkTitle)}">● ${conn.lastPing} ms</span>`;
     } else if (conn.lastPingStatus === 'unreachable') {
-      pingHtml = `<span class="ping-badge ping-unreachable" title="Последняя проверка: ${formatTime(conn.lastPingCheckedAt)}">● Недоступен</span>`;
+      const errNote = conn.lastPingError ? `\nПричина: ${conn.lastPingError}` : '';
+      const checkTitle = `Недоступен${errNote}` +
+        (conn.lastPingCheckedAt ? ` • Проверено: ${formatTime(conn.lastPingCheckedAt)}` : '');
+      pingHtml = `<span class="ping-badge ping-unreachable" title="${escapeHtml(checkTitle)}">● Недоступен</span>`;
     } else {
       pingHtml = `<span class="ping-badge ping-none">Не проверялся</span>`;
     }
@@ -912,15 +918,19 @@ async function checkConnectionPing(id) {
     if (conn) {
       conn.lastPing = data.ping;
       conn.lastPingStatus = data.status;
+      conn.lastPingError = data.error || null;
+      conn.lastPingType = data.checkType || 'tcp';
       conn.lastPingCheckedAt = data.checkedAt || new Date().toISOString();
       if (data.countryCode) conn.countryCode = data.countryCode;
       if (data.countryName) conn.countryName = data.countryName;
     }
 
     if (data.status === 'ok') {
-      showToast(`Подключение доступно! Пинг: ${data.latencyStr}`, 'success');
+      const proxyNote = data.checkType === 'proxy' ? ' (туннель подтверждён)' : '';
+      showToast(`Подключение доступно! Пинг: ${data.latencyStr}${proxyNote}`, 'success');
     } else {
-      showToast('Подключение недоступно', 'error');
+      const reason = data.error ? `: ${data.error}` : '';
+      showToast(`Подключение недоступно${reason}`, 'error');
     }
   } catch (err) {
     showToast(err.message, 'error');
@@ -958,17 +968,23 @@ async function checkAllPing() {
           const data = await res.json();
           conn.lastPing = data.ping;
           conn.lastPingStatus = data.status;
+          conn.lastPingError = data.error || null;
+          conn.lastPingType = data.checkType || 'tcp';
           conn.lastPingCheckedAt = data.checkedAt || new Date().toISOString();
           if (data.countryCode) conn.countryCode = data.countryCode;
           if (data.countryName) conn.countryName = data.countryName;
         } else {
+          let errText = '';
+          try { const d = await res.json(); errText = d.error || ''; } catch (e) {}
           conn.lastPing = null;
           conn.lastPingStatus = 'unreachable';
+          conn.lastPingError = errText;
           conn.lastPingCheckedAt = new Date().toISOString();
         }
       } catch (e) {
         conn.lastPing = null;
         conn.lastPingStatus = 'unreachable';
+        conn.lastPingError = e.message || 'Ошибка сети';
         conn.lastPingCheckedAt = new Date().toISOString();
       } finally {
         pingingConnectionIds.delete(conn.id);
@@ -2409,7 +2425,7 @@ function getFlagEmoji(countryCode) {
 // ==============================================================================
 let updateCheckRan = false;
 let latestReleaseInfo = null;
-let currentAppVersion = '2.0.1';
+let currentAppVersion = '2.0.2';
 let isUpdateInProgress = false;
 let updatePollTimer = null;
 
