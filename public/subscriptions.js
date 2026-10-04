@@ -18,6 +18,31 @@ function subscriptionUpdatedLabel(value) {
   }) : '';
 }
 
+function subscriptionBytes(value) {
+  if (!Number.isFinite(value) || value < 0) return '—';
+  const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ', 'ПБ'];
+  const unit = value > 0 ? Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1) : 0;
+  return (value / 1024 ** unit).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' ' + units[unit];
+}
+
+function subscriptionInfoHtml(info = {}) {
+  const used = Number.isFinite(info.upload) && Number.isFinite(info.download) ? info.upload + info.download : null;
+  const total = Number.isFinite(info.total) ? info.total : null;
+  const traffic = used !== null || total !== null;
+  const percent = used !== null && total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : null;
+  const expiry = info.expire === 0 ? 'Без срока действия' : info.expire > 0 ? new Date(info.expire * 1000).toLocaleDateString('ru-RU') : '';
+  if (!traffic && !expiry && !info.title && !info.description) return '';
+  return `<div class="subscription-info">
+    ${info.title ? `<p class="subscription-provider-title">${escapeHtml(info.title)}</p>` : ''}
+    <div class="subscription-details">
+      ${traffic ? `<div class="subscription-traffic"><span class="help-text">Трафик</span><div>${used === null ? 'Расход не указан' : subscriptionBytes(used)} / ${total === 0 ? 'Безлимит' : total === null ? 'Лимит не указан' : subscriptionBytes(total)}</div>
+        ${percent !== null ? `<div class="subscription-progress" role="progressbar" aria-label="Использовано трафика" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(percent)}"><span style="width:${percent}%"></span></div>` : ''}</div>` : ''}
+      ${expiry ? `<div><span class="help-text">${info.expire > 0 && info.expire * 1000 <= Date.now() ? 'Истекла' : 'Срок действия'}</span><div>${expiry}</div></div>` : ''}
+    </div>
+    ${info.description ? `<p class="subscription-description">${escapeHtml(info.description)}</p>` : ''}
+  </div>`;
+}
+
 function renderSubscriptions() {
   const list = appData.subscriptions || [];
   document.getElementById('subscriptions-count-badge').textContent = list.length;
@@ -32,6 +57,7 @@ function renderSubscriptions() {
       <div class="subscription-heading"><h3>${escapeHtml(sub.name)}</h3><span class="subscription-status ${sub.lastError ? 'subscription-error' : ''}">${status}</span></div>
       <p class="subscription-source">${escapeHtml(sub.source)}</p>
       <div class="subscription-metrics"><span><strong>${sub.count || 0}</strong> ${serverNoun(sub.count || 0)}</span><span>${escapeHtml(subscriptionIntervals[sub.intervalHours] || 'Вручную')}</span></div>
+      ${subscriptionInfoHtml(sub.info)}
       ${stats?.protected ? `<p class="help-text">Сохранено отсутствующих серверов: ${stats.protected}. Они используются или изменены вручную — проверьте их во вкладке «Подключения».</p>` : ''}
       ${stats?.unsupported?.length ? `<p class="help-text">Пропущены протоколы: ${escapeHtml(stats.unsupported.join(', '))}. Отсутствующие серверы сохранены.</p>` : ''}
       ${sub.lastError ? `<p class="subscription-error" role="alert">${escapeHtml(sub.lastError)}</p>` : ''}

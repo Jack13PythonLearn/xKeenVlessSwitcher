@@ -38,7 +38,7 @@
 .subscription-heading h3 { overflow-wrap: anywhere; }
 .subscription-status { color: var(--accent-green); font-size: 13px; }
 .subscription-source { color: var(--text-muted); margin: 8px 0 20px; overflow-wrap: anywhere; font-size: 13px; }
-.subscription-metrics { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-bottom: 16px; color: var(--text-muted); font-size: 14px; }
+.subscription-metrics { display: flex; flex-wrap: wrap; align-items: baseline; gap: 18px; margin-bottom: 16px; color: var(--text-muted); font-size: 14px; }
 .subscription-metrics strong { color: var(--text-main); font-size: 24px; }
 .subscription-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
 .subscription-error { color: var(--accent-danger); margin-top: 12px; overflow-wrap: anywhere; font-size: 13px; }
@@ -3481,3 +3481,12 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="url"]:focus, i
 }
 
 
+
+.subscription-metrics { align-items: baseline; }
+.subscription-info { padding: 18px; background: rgba(255,255,255,.025); border: 1px solid var(--border-color, rgba(255,255,255,.1)); border-radius: 12px; margin-top: 18px; }
+.subscription-provider-title { font-weight: 600; margin: 0 0 14px; overflow-wrap: anywhere; }
+.subscription-details { display: flex; flex-wrap: wrap; gap: 18px 36px; line-height: 1.7; }
+.subscription-traffic { flex: 1 1 220px; max-width: 420px; }
+.subscription-progress { height: 7px; border-radius: 8px; background: rgba(255,255,255,.1); overflow: hidden; margin-top: 8px; }
+.subscription-progress span { display: block; height: 100%; background: var(--accent-green); border-radius: inherit; }
+.subscription-description { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); font-size: 14px; line-height: 1.65; margin: 18px 0 0; }

@@ -323,3 +323,37 @@ test('HTTP API redacts URL, deletion does not exclude servers, and backup restor
     assert.equal(loadData().subscriptions[0].excluded.length, 0);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
+
+test('provider metadata decodes UTF-8 and validates usage without exposing account URLs', () => {
+  const { subscriptionInfo } = require('../lib/subscriptions');
+  const info = subscriptionInfo({ 'profile-title': 'base64:' + Buffer.from('Тестовая подписка').toString('base64'), announce: 'base64:' + Buffer.from('Описание\nВторая строка').toString('base64'), 'subscription-userinfo': 'upload=10; download=20; total=0; expire=1790951622', 'profile-web-page-url': 'https://example.com/secret' });
+  assert.deepEqual(info, { title: 'Тестовая подписка', description: 'Описание\nВторая строка', upload: 10, download: 20, total: 0, expire: 1790951622 });
+  assert.deepEqual(subscriptionInfo({ 'subscription-userinfo': 'upload=-1; download=NaN; total=9999999999999999999; expire=999999999999', announce: 'base64:!!!' }), {});
+});
+test('refresh replaces metadata, preserves it on failure, and clears it on URL change', async () => {
+  let response = { text: vless(), info: { total: 100, download: 10, upload: 0 } };
+  const h = harness(async () => { if (response instanceof Error) throw response; return response; });
+  await h.manager.refresh('s');
+  assert.equal(h.get().subscriptions[0].info.total, 100);
+  response = new Error('Network error');
+  await assert.rejects(h.manager.refresh('s'));
+  assert.equal(h.get().subscriptions[0].info.total, 100);
+  response = { text: vless(), info: {} };
+  await h.manager.refresh('s');
+  assert.deepEqual(h.get().subscriptions[0].info, {});
+  h.manager.edit('s', { url: 'https://example.com/new' });
+  assert.equal(h.get().subscriptions[0].info, undefined);
+});
+test('download returns only final response metadata and keeps the string API compatible', async () => {
+  const server = http.createServer((req, res) => {
+    if (req.url === '/redirect') { res.writeHead(302, { location: '/feed', 'profile-title': 'Wrong' }); res.end(); }
+    else { res.writeHead(200, { 'profile-title': 'Demo', 'subscription-userinfo': 'upload=0; download=20; total=100; expire=0' }); res.end(vless()); }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const url = 'http://127.0.0.1:' + server.address().port + '/redirect';
+    const result = await downloadSubscription(url, { allowPrivate: true, includeMetadata: true });
+    assert.equal(result.text, vless()); assert.equal(result.info.title, 'Demo'); assert.equal(result.info.download, 20);
+    assert.equal(await downloadSubscription(url, { allowPrivate: true }), vless());
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});

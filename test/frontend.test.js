@@ -65,3 +65,15 @@ test('QR export retains Hysteria2 auth and VLESS TLS certificate pin, XHTTP sett
   assert.equal(v.searchParams.get('path'), '/test');
   assert.equal(v.hostname, '[2001:db8::1]');
 });
+
+test('subscription info handles unknown and unlimited traffic, expiry, clamps progress and escapes announcements', () => {
+  assert.equal(scope.subscriptionBytes(60.9 * 1024 ** 3), '60,9 ГБ');
+  assert.equal(scope.subscriptionBytes(0), '0 Б');
+  assert.equal(scope.subscriptionInfoHtml({}), '');
+  const html = scope.subscriptionInfoHtml({ upload: 0, download: 200, total: 100, expire: 1, title: '<img src=x>', description: '<script>alert(1)</script>' });
+  assert.match(html, /aria-valuenow="100"/); assert.match(html, /Истекла/);
+  assert.ok(!html.includes('<script>')); assert.ok(!html.includes('<img'));
+  assert.match(scope.subscriptionInfoHtml({ total: 0, expire: 0 }), /Безлимит/);
+  assert.match(scope.subscriptionInfoHtml({ total: 0 }), /Расход не указан/);
+  assert.match(scope.subscriptionInfoHtml({ upload: 0, download: 0 }), /Лимит не указан/);
+});
