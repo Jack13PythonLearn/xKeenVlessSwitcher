@@ -31,6 +31,22 @@
   --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.subscription-intro { color: var(--text-muted); margin-top: 6px; font-size: 14px; }
+.subscriptions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 20px; }
+.subscription-card { padding: 24px; min-width: 0; }
+.subscription-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; justify-content: space-between; }
+.subscription-heading h3 { overflow-wrap: anywhere; }
+.subscription-status { color: var(--accent-green); font-size: 13px; }
+.subscription-source { color: var(--text-muted); margin: 8px 0 20px; overflow-wrap: anywhere; font-size: 13px; }
+.subscription-metrics { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-bottom: 16px; color: var(--text-muted); font-size: 14px; }
+.subscription-metrics strong { color: var(--text-main); font-size: 24px; }
+.subscription-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.subscription-error { color: var(--accent-danger); margin-top: 12px; overflow-wrap: anywhere; font-size: 13px; }
+.subscription-check { display: flex; align-items: center; gap: 10px; }
+.subscription-check input { width: auto; }
+#section-subscriptions .section-title-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.brand-title-row { flex-wrap: wrap; }
+
 * {
   box-sizing: border-box;
   margin: 0;

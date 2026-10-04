@@ -12,7 +12,7 @@ node_modules/
 package-lock.json
 
 # Local profiles / user data
-data/*.json
+data/*
 !data/.gitkeep
 
 # Logs and backups
