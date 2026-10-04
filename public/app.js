@@ -81,11 +81,14 @@ function switchMainTab(tab) {
 // ==============================================================================
 // DATA FETCHING & RENDERING
 // ==============================================================================
+let dataLoadSequence = 0;
 async function loadData() {
+  const sequence = ++dataLoadSequence;
   try {
-    const res = await fetch('/api/data');
+    const res = await fetch('/api/data', { cache: 'no-store' });
     if (!res.ok) throw new Error(`Ошибка загрузки данных (${res.status})`);
     const data = await res.json();
+    if (sequence !== dataLoadSequence) return;
     appData = data;
 
     if (data.version) {
@@ -300,15 +303,15 @@ function renderConnections() {
       return `<option value="${r.id}" ${sel}>${escapeHtml(r.name)}</option>`;
     }).join('');
 
-    const flag = getFlagEmoji(conn.countryCode);
-    const countryTitle = conn.countryName ? `${conn.countryName} (${conn.countryCode})` : (conn.countryCode || '');
+    const display = getConnectionDisplay(conn);
+    const { flag, countryTitle } = display;
     const flagHtml = flag ? `<span class="conn-flag" title="${escapeHtml(countryTitle)}">${flag}</span>` : '';
 
     return `
       <div class="conn-card glass-card ${isActive ? 'active-conn' : ''}" id="card-conn-${conn.id}">
         <div>
           <div class="conn-card-header">
-            <h3 class="conn-title">${flagHtml ? flagHtml + ' ' : ''}<span>${escapeHtml(conn.name)}</span></h3>
+            <h3 class="conn-title">${flagHtml ? flagHtml + ' ' : ''}<span>${escapeHtml(display.name)}</span></h3>
             ${isActive ? `<span class="active-pill-badge"><span class="status-dot"></span> Активно</span>` : ''}
           </div>
 
@@ -759,7 +762,7 @@ async function activateConnection(id) {
 // Delete Connection
 async function deleteConnection(id, name) {
   const fromSubscription = appData.connections.find(c => c.id === id)?.subscriptionId;
-  if (!confirm(`Удалить подключение "${name}"?${fromSubscription ? '\nОно будет исключено из последующих обновлений подписки.' : ''}`)) return;
+  if (!confirm(`Удалить подключение "${name}"?${fromSubscription ? '\nЕсли сервер остаётся в подписке, он вернётся при её следующем обновлении.' : ''}`)) return;
 
   try {
     const res = await fetch(`/api/connections/${id}`, {
@@ -1630,9 +1633,10 @@ async function populateFailoverForm() {
   const optionsHtml = '<option value="">-- Выберите подключение --</option>' +
     connections.map(c => {
       const isAct = (c.id === appData.activeConnectionId) ? ' [Активно]' : '';
-      const flag = getFlagEmoji(c.countryCode);
+      const display = getConnectionDisplay(c);
+      const { flag } = display;
       const flagPrefix = flag ? `${flag} ` : '';
-      return `<option value="${escapeHtml(c.id)}">${flagPrefix}${escapeHtml(c.name)}${isAct} (${escapeHtml(c.serverAddress || '')})</option>`;
+      return `<option value="${escapeHtml(c.id)}">${flagPrefix}${escapeHtml(display.name)}${isAct} (${escapeHtml(c.serverAddress || '')})</option>`;
     }).join('');
 
   primarySelect.innerHTML = optionsHtml;
@@ -2039,10 +2043,11 @@ async function populateAutoFailoverForm() {
   const specificPrimarySelect = document.getElementById('af-specific-primary-conn');
   if (specificPrimarySelect) {
     specificPrimarySelect.innerHTML = conns.map(c => {
-      const flag = getFlagEmoji(c.countryCode);
+      const display = getConnectionDisplay(c);
+      const { flag } = display;
       const flagPrefix = flag ? `${flag} ` : '';
       const isAct = (c.id === appData.activeConnectionId) ? ' [Активно]' : '';
-      return `<option value="${escapeHtml(c.id)}">${flagPrefix}${escapeHtml(c.name)}${isAct} (${escapeHtml(c.serverAddress)}:${c.serverPort})</option>`;
+      return `<option value="${escapeHtml(c.id)}">${flagPrefix}${escapeHtml(display.name)}${isAct} (${escapeHtml(c.serverAddress)}:${c.serverPort})</option>`;
     }).join('');
 
     if (af.specificPrimaryId) {
@@ -2059,7 +2064,8 @@ async function populateAutoFailoverForm() {
 
     poolContainer.innerHTML = conns.map(c => {
       const isChecked = savedPool.includes(c.id);
-      const flag = getFlagEmoji(c.countryCode);
+      const display = getConnectionDisplay(c);
+      const { flag } = display;
       const flagHtml = flag ? `<span class="conn-flag">${flag}</span>` : '';
       const pingText = c.lastPing ? `${c.lastPing} ms` : (c.lastPingStatus === 'unreachable' ? 'Недоступен' : '–');
       const pingClass = c.lastPing ? 'ok' : '';
@@ -2070,7 +2076,7 @@ async function populateAutoFailoverForm() {
             <input type="checkbox" class="pool-conn-checkbox" id="af-pool-conn-${c.id}" value="${c.id}" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation()">
             <label class="pool-conn-name" for="af-pool-conn-${c.id}" onclick="event.stopPropagation()">
               ${flagHtml}
-              <span>${escapeHtml(c.name)}</span>
+              <span>${escapeHtml(display.name)}</span>
             </label>
           </div>
           <div class="pool-conn-right">
@@ -2436,12 +2442,24 @@ function formatTime(isoStr) {
 }
 
 function getFlagEmoji(countryCode) {
-  if (!countryCode || typeof countryCode !== 'string' || countryCode.trim().length !== 2) return '';
+  if (typeof countryCode !== 'string' || !/^[a-z]{2}$/i.test(countryCode.trim())) return '';
   const clean = countryCode.trim().toUpperCase();
   const codePoints = clean
     .split('')
     .map(char => 127397 + char.charCodeAt(0));
   return String.fromCodePoint(...codePoints);
+}
+
+function getConnectionDisplay(conn) {
+  const name = String(conn.name || '');
+  const namedFlag = name.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u)?.[0];
+  if (namedFlag) {
+    const countryCode = [...namedFlag].map(char => String.fromCharCode(char.codePointAt(0) - 127397)).join('');
+    return { flag: namedFlag, name: name.replace(namedFlag, '').trim(),
+      countryTitle: `Страна из названия сервера: ${countryCode}` };
+  }
+  return { flag: getFlagEmoji(conn.countryCode), name,
+    countryTitle: conn.countryName ? `${conn.countryName} (${conn.countryCode})` : (conn.countryCode || '') };
 }
 
 // ==============================================================================

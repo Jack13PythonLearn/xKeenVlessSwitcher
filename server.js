@@ -7,7 +7,7 @@ const path = require('path');
 const { exec, execSync, spawn } = require('child_process');
 const zlib = require('zlib');
 const os = require('os');
-const { createSubscriptionManager, publicSubscription, subscriptionUrl, connectionIdentity } = require('./lib/subscriptions');
+const { createSubscriptionManager, publicSubscription, subscriptionUrl } = require('./lib/subscriptions');
 const { mergeChanges } = require('./lib/data-merge');
 const dataSnapshots = new WeakMap();
 
@@ -2615,13 +2615,6 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 404, { error: 'Подключение не найдено' });
     }
 
-    const removed = data.connections[index];
-    const source = data.subscriptions.find(x => x.id === removed.subscriptionId);
-    if (source && removed.subscriptionKey) {
-      source.excluded = [...(source.excluded || []).filter(x => x.key !== removed.subscriptionKey), {
-        key: removed.subscriptionKey, identity: removed.subscriptionIdentity || connectionIdentity(removed.outboundContent), name: removed.name
-      }];
-    }
     data.connections.splice(index, 1);
     if (data.settings.activeConnectionId === id) {
       data.settings.activeConnectionId = null;

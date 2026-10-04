@@ -3,6 +3,21 @@
 const subscriptionBusy = new Set();
 const subscriptionIntervals = { 0: 'Вручную', 1: 'Каждый час', 6: 'Раз в 6 часов', 12: 'Раз в 12 часов', 24: 'Раз в сутки', 72: 'Раз в 3 дня', 168: 'Раз в неделю' };
 
+function serverNoun(count) {
+  const n = Math.abs(Number(count)) % 100;
+  if (n >= 11 && n <= 14) return 'серверов';
+  if (n % 10 === 1) return 'сервер';
+  if (n % 10 >= 2 && n % 10 <= 4) return 'сервера';
+  return 'серверов';
+}
+
+function subscriptionUpdatedLabel(value) {
+  const date = new Date(value);
+  return value && Number.isFinite(date.getTime()) ? date.toLocaleString('ru-RU', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
+  }) : '';
+}
+
 function renderSubscriptions() {
   const list = appData.subscriptions || [];
   document.getElementById('subscriptions-count-badge').textContent = list.length;
@@ -11,12 +26,12 @@ function renderSubscriptions() {
   container.innerHTML = list.map(sub => {
     const busy = subscriptionBusy.has(sub.id);
     const stats = sub.stats;
-    const status = busy ? 'Обновляется…' : sub.lastError ? 'Ошибка обновления' : sub.lastUpdatedAt ? 'Обновлена' : 'Ожидает загрузки';
+    const updated = subscriptionUpdatedLabel(sub.lastUpdatedAt);
+    const status = busy ? 'Обновляется…' : sub.lastError ? 'Ошибка обновления' : updated ? `Обновлено · ${updated}` : 'Ожидает загрузки';
     return `<article class="glass-card subscription-card">
       <div class="subscription-heading"><h3>${escapeHtml(sub.name)}</h3><span class="subscription-status ${sub.lastError ? 'subscription-error' : ''}">${status}</span></div>
       <p class="subscription-source">${escapeHtml(sub.source)}</p>
-      <div class="subscription-metrics"><span><strong>${sub.count || 0}</strong> серверов</span><span>${escapeHtml(subscriptionIntervals[sub.intervalHours] || 'Вручную')}</span><span>Исключено: ${(sub.excluded || []).length}</span></div>
-      <p class="help-text">Последнее обновление: ${sub.lastUpdatedAt ? escapeHtml(new Date(sub.lastUpdatedAt).toLocaleString()) : 'ещё не было'}</p>
+      <div class="subscription-metrics"><span><strong>${sub.count || 0}</strong> ${serverNoun(sub.count || 0)}</span><span>${escapeHtml(subscriptionIntervals[sub.intervalHours] || 'Вручную')}</span></div>
       ${stats ? `<p class="help-text">Добавлено: ${stats.added}; привязано: ${stats.adopted}; обновлено: ${stats.updated || 0}; удалено из подписки: ${stats.removed}.</p>` : ''}
       ${stats?.protected ? `<p class="help-text">Сохранено отсутствующих серверов: ${stats.protected}. Они используются или изменены вручную — проверьте их во вкладке «Подключения».</p>` : ''}
       ${stats?.unsupported?.length ? `<p class="help-text">Пропущены протоколы: ${escapeHtml(stats.unsupported.join(', '))}. Отсутствующие серверы сохранены.</p>` : ''}
@@ -24,7 +39,6 @@ function renderSubscriptions() {
       <div class="subscription-actions">
         <button class="btn btn-primary btn-sm" data-sub-action="refresh" data-sub-id="${escapeHtml(sub.id)}" ${busy ? 'disabled' : ''}>${busy ? 'Загрузка…' : 'Обновить'}</button>
         <button class="btn btn-secondary btn-sm" data-sub-action="edit" data-sub-id="${escapeHtml(sub.id)}" ${busy ? 'disabled' : ''}>Изменить</button>
-        ${(sub.excluded || []).length ? `<button class="btn btn-secondary btn-sm" data-sub-action="exclusions" data-sub-id="${escapeHtml(sub.id)}" ${busy ? 'disabled' : ''}>Вернуть исключённые</button>` : ''}
         <button class="btn btn-danger btn-sm" data-sub-action="delete" data-sub-id="${escapeHtml(sub.id)}" ${busy ? 'disabled' : ''}>Удалить подписку</button>
       </div>
     </article>`;
@@ -42,7 +56,6 @@ function openSubscriptionModal(id) {
   const routing = document.getElementById('subscription-routing');
   routing.innerHTML = appData.routings.map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('');
   routing.value = sub?.routingId || appData.connections.find(c => c.id === appData.settings.activeConnectionId)?.routingId || 'routing_all_vpn';
-  document.getElementById('subscription-adopt-group').classList.toggle('hidden', Boolean(sub));
   document.getElementById('subscription-modal-title').textContent = sub ? 'Настройки подписки' : 'Новая подписка';
   document.getElementById('subscription-save').textContent = sub ? 'Сохранить' : 'Добавить и загрузить';
   document.getElementById('subscription-form-error').textContent = '';
@@ -64,8 +77,7 @@ async function saveSubscription(event) {
   const id = document.getElementById('subscription-id').value;
   const body = {
     name: document.getElementById('subscription-name').value.trim(), url: document.getElementById('subscription-url').value.trim(),
-    intervalHours: Number(document.getElementById('subscription-interval').value), routingId: document.getElementById('subscription-routing').value,
-    adoptExistingOnly: document.getElementById('subscription-adopt').checked
+    intervalHours: Number(document.getElementById('subscription-interval').value), routingId: document.getElementById('subscription-routing').value
   };
   button.disabled = true;
   button.textContent = id ? 'Сохранение…' : 'Загрузка серверов…';
@@ -89,15 +101,11 @@ document.getElementById('subscriptions-list').addEventListener('click', async ev
   if (subscriptionBusy.has(id)) return;
   if (action === 'edit') return openSubscriptionModal(id);
   if (action === 'delete' && !confirm('Удалить подписку? Её серверы останутся в списке подключений, автоматическое обновление прекратится.')) return;
-  if (action === 'exclusions' && !confirm('Вернуть все исключённые серверы при обновлении? В том числе ранее удалённые неработающие.')) return;
   subscriptionBusy.add(id);
   renderSubscriptions();
   try {
     const base = '/' + encodeURIComponent(id);
-    if (action === 'exclusions') {
-      await subscriptionRequest(base + '/exclusions', 'DELETE');
-      await subscriptionRequest(base + '/refresh', 'POST');
-    } else await subscriptionRequest(base + (action === 'refresh' ? '/refresh' : ''), action === 'delete' ? 'DELETE' : 'POST');
+    await subscriptionRequest(base + (action === 'refresh' ? '/refresh' : ''), action === 'delete' ? 'DELETE' : 'POST');
     showToast(action === 'delete' ? 'Подписка удалена, серверы сохранены' : 'Подписка обновлена', 'success');
   } catch (error) { showToast(error.message, 'error'); }
   finally { subscriptionBusy.delete(id); await loadData(); }

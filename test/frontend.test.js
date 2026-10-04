@@ -7,6 +7,42 @@ const scope = { URLSearchParams, stripComments: x => x, console };
 vm.createContext(scope);
 vm.runInContext(source.slice(source.indexOf('function getConnectionVlessUrl('), source.indexOf('// Open QR Code Modal')), scope);
 vm.runInContext(source.slice(source.indexOf('function escapeHtml('), source.indexOf('function formatTime(')), scope);
+vm.runInContext(source.slice(source.indexOf('function getFlagEmoji('), source.indexOf('// GITHUB UPDATE CHECK')), scope);
+const subscriptionSource = fs.readFileSync(require.resolve('../public/subscriptions.js'), 'utf8');
+vm.runInContext(subscriptionSource.slice(0, subscriptionSource.indexOf('function openSubscriptionModal(')), scope);
+
+test('server counts use Russian singular, paucal and plural forms including teens', () => {
+  for (const [count, noun] of [[0, 'серверов'], [1, 'сервер'], [2, 'сервера'], [4, 'сервера'], [5, 'серверов'],
+    [11, 'серверов'], [12, 'серверов'], [14, 'серверов'], [21, 'сервер'], [22, 'сервера'], [101, 'сервер'], [112, 'серверов'], [199, 'серверов']]) {
+    assert.equal(scope.serverNoun(count), noun);
+  }
+});
+
+test('subscription status shows the update date and time and hides legacy exclusion controls', () => {
+  const elements = new Map();
+  scope.document = { getElementById: id => {
+    if (!elements.has(id)) elements.set(id, { classList: { toggle() {} } });
+    return elements.get(id);
+  } };
+  scope.appData = { subscriptions: [{ id: 's', name: 'Demo', source: 'https://example.com', count: 2, intervalHours: 24,
+    excluded: [{ key: 'legacy' }], lastUpdatedAt: '2026-10-04T17:00:00Z' }] };
+  scope.renderSubscriptions();
+  const html = elements.get('subscriptions-list').innerHTML;
+  assert.match(html, /Обновлено · 04\.10\.2026, \d{2}:\d{2}:\d{2}/);
+  assert.match(html, /<strong>2<\/strong> сервера/);
+  assert.ok(!html.includes('Исключено'));
+  assert.ok(!html.includes('Вернуть исключённые'));
+  assert.equal(scope.subscriptionUpdatedLabel('invalid'), '');
+});
+
+test('provider flags take precedence over GeoIP and render once in the connection label', () => {
+  const display = scope.getConnectionDisplay({ name: '🇫🇮 Finland', countryCode: 'DE', countryName: 'Germany', subscriptionId: 's' });
+  assert.equal(display.flag, '🇫🇮');
+  assert.equal(display.name, 'Finland');
+  assert.match(display.countryTitle, /FI/);
+  assert.equal(scope.getConnectionDisplay({ name: 'Manual', countryCode: 'DE' }).flag, '🇩🇪');
+  assert.equal(scope.getFlagEmoji('12'), '');
+});
 
 test('untrusted subscription labels remain literal in inline delete actions', () => {
   for (const name of ['Normal name', '" onmouseover="alert(1)', "\\'); throw new Error('injected'); //", '<img src=x onerror=alert(1)>', 'Line\nbreak']) {

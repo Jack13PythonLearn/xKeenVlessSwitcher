@@ -237,11 +237,7 @@
           <div class="form-group"><label for="subscription-routing">Роутинг новых серверов</label>
             <select id="subscription-routing" class="custom-select" required></select></div>
         </div>
-        <div class="form-group" id="subscription-adopt-group">
-          <label class="subscription-check"><input id="subscription-adopt" type="checkbox"> Сохранить прежний отбор серверов</label>
-          <small class="help-text">При первом обновлении привязать только уже добавленные серверы. Остальные попадут в исключения. Подходит после ручного удаления неработающих узлов.</small>
-        </div>
-        <p class="help-text">Обновление сохраняет маршрутизацию существующих подключений. Выбрать и включить новый сервер можно во вкладке «Подключения».</p>
+        <p class="help-text">При обновлении загружаются все серверы из подписки. Список во вкладке «Подключения» обновляется автоматически; маршрутизация существующих серверов сохраняется.</p>
         <p id="subscription-form-error" class="subscription-error" role="alert"></p>
         <div class="modal-footer"><button type="submit" class="btn btn-primary" id="subscription-save">Добавить и загрузить</button>
           <button type="button" class="btn btn-secondary" onclick="closeModal('modal-subscription')">Отмена</button></div>

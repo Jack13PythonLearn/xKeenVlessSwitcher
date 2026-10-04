@@ -196,7 +196,7 @@ test('failed fetch preserves servers and source is redacted in the API list', as
   assert.equal(h.manager.list()[0].url, undefined);
   assert.equal(h.manager.list()[0].source, 'https://example.com');
 });
-test('migration choice survives an initial fetch failure and retry', async () => {
+test('retry after a failed import loads all servers despite legacy migration options', async () => {
   let failed = true;
   const h = harness(async () => { if (failed) throw new Error('offline'); return vless() + '\n' + hy; });
   h.get().subscriptions = [];
@@ -205,8 +205,26 @@ test('migration choice survives an initial fetch failure and retry', async () =>
   assert.equal(result.error, 'offline');
   failed = false;
   await h.manager.refresh(result.id);
+  assert.equal(h.get().connections.length, 2);
+  assert.equal(h.get().subscriptions[0].excluded.length, 0);
+});
+
+test('every refresh uses the complete provider list and removes legacy exclusions', async () => {
+  let feed = vless() + '\n' + hy;
+  const h = harness(async () => feed);
+  h.get().subscriptions[0].excluded = [{ key: parse(hy).nodes[0].key, identity: connectionIdentity(parse(hy).nodes[0].outboundContent) }];
+  h.get().subscriptions[0].adoptExistingOnly = true;
+  await h.manager.refresh('s');
+  assert.equal(h.get().connections.length, 2);
+  assert.equal(h.get().subscriptions[0].excluded.length, 0);
+  assert.equal(h.manager.list()[0].excluded, undefined);
+  h.get().connections.pop();
+  assert.equal((await h.manager.refresh('s')).added, 1);
+  assert.equal(h.get().connections.length, 2);
+  feed = hy;
+  assert.equal((await h.manager.refresh('s')).removed, 1);
   assert.equal(h.get().connections.length, 1);
-  assert.equal(h.get().subscriptions[0].excluded.length, 1);
+  assert.equal(h.manager.list()[0].count, 1);
 });
 test('concurrent refresh, edit and delete cannot resurrect a removed source or apply an old URL', async () => {
   let release;
@@ -282,7 +300,7 @@ test('three-way save preserves concurrent subscription additions, settings and d
   assert.equal(loadData().connections.find(x => x.id === 'a').lastPing, 42);
   assert.ok(loadData().connections.some(x => x.id === 'imported'));
 });
-test('HTTP API redacts URL, persists exclusions, and backup restore retains subscription ownership', async () => {
+test('HTTP API redacts URL, deletion does not exclude servers, and backup restore retains subscription ownership', async () => {
   const state = data();
   reconcile(state, 's', parse(vless() + '\n' + hy));
   state.settings.restartCommand = '';
@@ -295,12 +313,13 @@ test('HTTP API redacts URL, persists exclusions, and backup restore retains subs
     assert.equal(visible.connections[0].subscriptionId, 's');
     const remove = await fetch(base + '/api/connections/' + state.connections[0].id, { method: 'DELETE' });
     assert.equal(remove.status, 200);
-    assert.equal(loadData().subscriptions[0].excluded.length, 1);
+    assert.equal(loadData().subscriptions[0].excluded.length, 0);
     const backup = await (await fetch(base + '/api/backup/export')).arrayBuffer();
     const restored = await fetch(base + '/api/backup/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zipBase64: Buffer.from(backup).toString('base64') }) });
     assert.equal(restored.status, 200, await restored.text());
     assert.equal(loadData().connections[0].subscriptionId, 's');
+    assert.ok(loadData().connections[0].subscriptionIdentity);
     assert.equal(loadData().subscriptions[0].url, 'https://example.com/private-token');
-    assert.equal(loadData().subscriptions[0].excluded.length, 1);
+    assert.equal(loadData().subscriptions[0].excluded.length, 0);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
