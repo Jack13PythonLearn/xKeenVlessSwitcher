@@ -381,7 +381,7 @@ function routingRulesHtml(profile) {
  const destination=directions[rule.outboundTag]||rule.outboundTag||(rule.balancerTag?'Балансировщик: '+rule.balancerTag:'Выход не указан');
  const conditions=Object.entries(rule).filter(([key])=>!['type','outboundTag','balancerTag'].includes(key)).map(([key,value])=>{
  const values=Array.isArray(value)?value:[typeof value==='object'?JSON.stringify(value):String(value)];
- const tags=values.map(v=>'<span class="routing-rule-tag">'+escapeHtml(key==='domain'?String(v).replace(/^domain:/,''):String(v))+'</span>').join('');
+ const tags=values.map(v=>'<span class="routing-rule-tag">'+escapeHtml(key==='domain'?String(v).replace(/^(?:domain|full):/,''):String(v))+'</span>').join('');
  return values.length>6?'<details class="routing-values"><summary>'+escapeHtml(labels[key]||key)+' · '+values.length+' записей</summary><div class="routing-rule-tags">'+tags+'</div></details>':'<div class="routing-condition"><span>'+escapeHtml(labels[key]||key)+'</span><div class="routing-rule-tags">'+tags+'</div></div>';
  }).join('');
  return '<li><div class="routing-destination">'+escapeHtml(destination)+'</div><div>'+ (conditions||'<span class="help-text">Без дополнительных условий</span>')+'</div></li>';
