@@ -363,56 +363,63 @@ function renderConnections() {
 }
 
 // Render Routings Grid
+const expandedRoutings = new Set();
+function routingIcon(kind) {
+ const shapes = {edit:'<path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',lock:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',chevron:'<path d="m6 9 6 6 6-6"/>',globe:'<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>',trash:'<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>'};
+ return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">'+(shapes[kind]||shapes.globe)+'</svg>';
+}
+function routingAssignmentsLabel(n) {
+ const last=n%100;return n+' '+(last>=11&&last<=14?'подключений':n%10===1?'подключение':n%10>=2&&n%10<=4?'подключения':'подключений');
+}
+function routingRulesHtml(profile) {
+ let parsed;try {parsed=JSON.parse(stripComments(profile.content));}catch{return '<p class="help-text">Не удалось разобрать правила. Откройте JSON для проверки.</p>';}
+ const rules=(parsed.routing||parsed).rules;
+ if(!Array.isArray(rules))return '<p class="help-text">Список правил отсутствует. Проверьте JSON.</p>';
+ const labels={domain:'Домены',ip:'IP-адреса',protocol:'Протокол',network:'Сеть',port:'Порты',inboundTag:'Входящие подключения',source:'Источник',sourcePort:'Порт источника',user:'Пользователь'};
+ const directions={direct:'Напрямую','vless-reality':'Через VPN',block:'Блокировать'};
+ return '<p class="routing-order-note">Правила проверяются сверху вниз. Применяется первое совпадение.</p><ol class="routing-rules-list">'+rules.map(rule=>{
+ const destination=directions[rule.outboundTag]||rule.outboundTag||(rule.balancerTag?'Балансировщик: '+rule.balancerTag:'Выход не указан');
+ const conditions=Object.entries(rule).filter(([key])=>!['type','outboundTag','balancerTag'].includes(key)).map(([key,value])=>{
+ const values=Array.isArray(value)?value:[typeof value==='object'?JSON.stringify(value):String(value)];
+ const tags=values.map(v=>'<span class="routing-rule-tag">'+escapeHtml(String(v))+'</span>').join('');
+ return values.length>6?'<details class="routing-values"><summary>'+escapeHtml(labels[key]||key)+' · '+values.length+' записей</summary><div class="routing-rule-tags">'+tags+'</div></details>':'<div class="routing-condition"><span>'+escapeHtml(labels[key]||key)+'</span><div class="routing-rule-tags">'+tags+'</div></div>';
+ }).join('');
+ return '<li><div class="routing-destination">'+escapeHtml(destination)+'</div><div>'+ (conditions||'<span class="help-text">Без дополнительных условий</span>')+'</div></li>';
+ }).join('')+'</ol><p class="routing-order-note">Если совпадений нет, Xray использует первый выход активного подключения. У стандартных подключений панели это VPN.</p>';
+}
+function toggleRoutingDetails(id) {
+ const row=document.getElementById('routing-row-'+id);if(!row)return;
+ const details=row.querySelector('.routing-details');details.hidden=!details.hidden;
+ row.querySelector('.routing-expand').setAttribute('aria-expanded',String(!details.hidden));
+ if(details.hidden)expandedRoutings.delete(id);else expandedRoutings.add(id);
+}
+function copyRouting(id) {
+ const r=appData.routings.find(x=>x.id===id);if(!r)return;
+ openAddRoutingModal();document.getElementById('routing-name').value=r.name+' — копия';
+ document.getElementById('routing-desc').value=r.description||'';setEditorContent('routing-content-json',r.content);
+ document.getElementById('modal-routing-title').textContent='Копия профиля маршрутизации';
+}
+async function importRoutingFile(input) {
+ const file=input.files?.[0];if(!file)return;
+ try {if(file.size>1024*1024)throw Error('Файл больше 1 МБ.');const content=await file.text();const parsed=JSON.parse(stripComments(content));if(!Array.isArray((parsed.routing||parsed).rules))throw Error('В файле нет списка правил маршрутизации.');openAddRoutingModal();document.getElementById('routing-name').value=file.name.replace(/\.json$/i,'');setEditorContent('routing-content-json',JSON.stringify(parsed.routing?parsed:{routing:parsed},null,2));}catch(e){showToast(e.message,'error');}finally{input.value='';}
+}
 function renderRoutings() {
-  if (!routingsGrid) return;
-  const rawList = appData.routings || [];
-  const list = [
-    ...rawList.filter(r => !r.isSystem),
-    ...rawList.filter(r => r.isSystem)
-  ];
-
-  if (routingsCount) routingsCount.textContent = list.length;
-  if (routingsBadge) routingsBadge.textContent = list.length;
-
-  routingsGrid.innerHTML = list.map(routing => {
-    return `
-      <div class="routing-card glass-card ${routing.isSystem ? 'system-routing' : ''}">
-        <div>
-          <div class="routing-header">
-            <h3 class="routing-title">${escapeHtml(routing.name)}</h3>
-            ${routing.isSystem ? `<span class="routing-system-badge">🔒 Защищен</span>` : ''}
-          </div>
-
-          <p class="routing-desc">${escapeHtml(routing.description || 'Без описания')}</p>
-
-          ${routing.isSystem ? `
-            <div class="routing-meta-row">
-              <span class="import-zip-hint">Нельзя изменить или удалить</span>
-            </div>
-          ` : ''}
-        </div>
-
-        <div class="routing-card-footer">
-          <div></div>
-          <div class="conn-footer-actions">
-            <button class="btn btn-secondary btn-sm btn-icon" onclick="openRoutingModal('${routing.id}')" title="${routing.isSystem ? 'Просмотр конфигурации JSON' : 'Редактировать routing.json'}">
-              ${routing.isSystem ? `
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              ` : `
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-              `}
-            </button>
-
-            ${!routing.isSystem ? `
-              <button class="btn btn-danger btn-sm btn-icon" onclick="deleteRouting('${routing.id}', '${escapeJs(routing.name)}')" title="Удалить маршрутизацию">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              </button>
-            ` : ''}
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
+ if(!routingsGrid)return;
+ const raw=appData.routings||[];const list=[...raw.filter(r=>!r.isSystem),...raw.filter(r=>r.isSystem)];
+ if(routingsCount)routingsCount.textContent=list.length;if(routingsBadge)routingsBadge.textContent=list.length;
+ const active=appData.connections.find(c=>c.id===appData.settings.activeConnectionId);
+ routingsGrid.innerHTML=list.map(r=>{
+ const live=active?.routingId===r.id;const count=appData.connections.filter(c=>c.routingId===r.id).length;const open=expandedRoutings.has(r.id);
+ const arg=escapeJs(r.id);const id=escapeHtml(r.id);
+ return `<article class="routing-list-row ${live?'routing-in-use':''}" id="routing-row-${id}">
+ <div class="routing-profile-name"><span class="routing-profile-icon">${r.replacesSystemRouting==='routing_except_ru'||r.id==='routing_except_ru'?'<span class="country-flag country-flag-ru" role="img" aria-label="Россия"></span>':routingIcon('globe')}</span><div><h3 class="routing-title">${escapeHtml(r.name)}</h3>${live?'<span class="routing-live-label">● Используется сейчас</span>':''}</div></div>
+ <span class="routing-assignment-count">${routingAssignmentsLabel(count)}</span>
+ <div class="routing-list-actions">${r.isSystem?'<span class="routing-lock" title="Встроенный профиль">'+routingIcon('lock')+'</span>':`<button class="btn btn-secondary btn-icon" onclick="openRoutingModal('${arg}')" title="Редактировать профиль" aria-label="Редактировать профиль">${routingIcon('edit')}</button>`}
+ <button class="btn btn-secondary btn-icon" onclick="copyRouting('${arg}')" title="Создать копию" aria-label="Создать копию">${routingIcon('copy')}</button>
+ ${!r.isSystem && r.replacesSystemRouting!=='routing_except_ru'?`<button class="btn btn-danger btn-icon" onclick="deleteRouting('${arg}', '${escapeJs(r.name)}')" title="Удалить профиль" aria-label="Удалить профиль">${routingIcon('trash')}</button>`:''}
+ <button class="btn btn-secondary btn-icon routing-expand" onclick="toggleRoutingDetails('${arg}')" aria-expanded="${open}" aria-controls="routing-details-${id}" title="Показать правила" aria-label="Показать правила">${routingIcon('chevron')}</button></div>
+ <div class="routing-details" id="routing-details-${id}" ${open?'':'hidden'}>${r.description?`<p class="routing-desc">${escapeHtml(r.description)}</p>`:''}${routingRulesHtml(r)}<div class="routing-details-footer"><button class="btn btn-secondary btn-sm" onclick="openRoutingModal('${arg}')">Расширенные настройки · JSON</button>${r.isSystem?'<span class="help-text">Встроенный профиль. Для изменения создайте копию.</span>':''}</div></div></article>`;
+ }).join('');
 }
 
 // Populate routing select dropdowns in modals

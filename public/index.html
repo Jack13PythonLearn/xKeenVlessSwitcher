@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=2.1.6">
-  <link rel="stylesheet" href="/flags.css?v=2.1.6">
+  <link rel="stylesheet" href="style.css?v=2.1.7">
+  <link rel="stylesheet" href="/flags.css?v=2.1.7">
 </head>
 <body>
   <div class="app-background"></div>
@@ -58,7 +58,7 @@
         <div>
           <div class="brand-title-row">
             <h1>xKeenVlessSwitcher</h1>
-            <span class="version-tag" id="header-version">v2.1.6</span>
+            <span class="version-tag" id="header-version">v2.1.7</span>
           </div>
           <p class="subtitle">Управление подключениями XKeen на роутерах Keenetic</p>
         </div>
@@ -167,13 +167,15 @@
 
     <!-- SECTION 2: ROUTINGS -->
     <main class="content-area hidden" id="section-routings">
-      <div class="section-title-row section-title-actions-left">
+      <div class="section-title-row section-title-actions-left routing-toolbar">
+        <h2>Профили маршрутизации</h2><div class="routing-toolbar-actions"><input type="file" id="routing-import-file" accept=".json,application/json" hidden onchange="importRoutingFile(this)"><button class="btn btn-secondary" onclick="document.getElementById('routing-import-file').click()">Импорт</button>
         <button class="btn btn-primary" id="btn-add-routing" onclick="openAddRoutingModal()" title="Добавить маршрутизацию">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-          <span>Добавить маршрутизацию</span>
+          <span>Добавить профиль</span>
         </button>
       </div>
 
+      </div>
       <div class="routings-grid" id="routings-grid">
         <!-- Rendered via JS -->
       </div>
@@ -196,7 +198,7 @@
     <footer class="bottom-bar glass-card footer-centered">
       <div class="footer-content">
         <div class="app-version-badge" id="app-version-badge" title="Версия приложения">
-          <span id="app-version-text">v2.1.6</span>
+          <span id="app-version-text">v2.1.7</span>
         </div>
         <div id="app-update-group" class="app-update-group hidden">
           <a id="app-update-badge" class="app-update-badge" href="https://github.com/Jack13PythonLearn/xKeenVlessSwitcher/releases" target="_blank" rel="noopener noreferrer" title="Нажмите, чтобы открыть страницу релиза на GitHub">
@@ -1101,7 +1103,7 @@
   <div id="toast-container"></div>
 
   <script src="qrcode.min.js"></script>
-  <script src="app.js?v=2.1.6"></script>
-  <script src="subscriptions.js?v=2.1.6"></script>
+  <script src="app.js?v=2.1.7"></script>
+  <script src="subscriptions.js?v=2.1.7"></script>
 </body>
 </html>

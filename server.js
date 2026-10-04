@@ -2960,7 +2960,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const routing = data.routings[index];
-    if (routing.isSystem) {
+    if (routing.isSystem || routing.replacesSystemRouting === 'routing_except_ru') {
       return sendJson(res, 403, { error: `Системный роутинг "${routing.name}" защищен от удаления` });
     }
 

@@ -91,3 +91,7 @@ test('compact list filters LTE by explicit names, groups LTE first and preserves
  ctx.onConnectionTypeChange('regular');assert.ok(grid.innerHTML.includes('card-conn-normal'));assert.ok(!grid.innerHTML.includes('card-conn-lte'));
  ctx.onConnectionTypeChange('all');assert.ok(grid.innerHTML.includes('card-conn-lte'));
 });
+
+test('routing list preserves rule order, escapes values and protects merged profile',()=>{
+ const grid={innerHTML:''};const ctx={console,escapeHtml:scope.escapeHtml,escapeJs:scope.escapeJs,stripComments:x=>x,routingsGrid:grid,routingsCount:{},routingsBadge:{},appData:{settings:{activeConnectionId:'c'},connections:[{id:'c',routingId:'merged'}],routings:[{id:'merged',name:'Всё через VPN кроме РФ',replacesSystemRouting:'routing_except_ru',content:JSON.stringify({routing:{rules:[{outboundTag:'block',domain:['<script>']},{outboundTag:'direct',ip:['geoip:private']}]}})}]}};vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('const expandedRoutings'),source.indexOf('// Populate routing select')),ctx);ctx.renderRoutings();assert.ok(!grid.innerHTML.includes('deleteRouting('));assert.ok(grid.innerHTML.includes('Редактировать профиль'));assert.ok(grid.innerHTML.includes('Используется сейчас'));assert.ok(grid.innerHTML.includes('&lt;script&gt;'));assert.ok(grid.innerHTML.indexOf('Блокировать')<grid.innerHTML.indexOf('Напрямую'));assert.equal(ctx.routingAssignmentsLabel(334),'334 подключения');
+});
