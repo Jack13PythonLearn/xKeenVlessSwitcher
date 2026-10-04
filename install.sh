@@ -1,6 +1,6 @@
 #!/bin/sh
 # ==============================================================================
-# XKeenSwitcher - Скрипт автоматической установки для среды Entware
+# xKeenVlessSwitcher - Скрипт автоматической установки для среды Entware
 # (Keenetic, OpenWrt, Asuswrt-Merlin и другие роутеры с Entware)
 # ==============================================================================
 
@@ -8,8 +8,8 @@ set -e
 
 INSTALL_DIR="/opt/etc/xkeen-switcher"
 INIT_SCRIPT="/opt/etc/init.d/S99xkeen-switcher"
-REPO_OWNER="sergey1900"
-REPO_NAME="XKeenSwitcher"
+REPO_OWNER="Jack13PythonLearn"
+REPO_NAME="xKeenVlessSwitcher"
 REPO_BRANCH="main"
 DEFAULT_PORT="3000"
 
@@ -66,7 +66,7 @@ NC='\033[0m'
 
 echo ""
 echo -e "${CYAN}${BOLD}====================================================${NC}"
-echo -e "${CYAN}${BOLD}       Установка XKeenSwitcher в Entware            ${NC}"
+echo -e "${CYAN}${BOLD}       Установка xKeenVlessSwitcher в Entware            ${NC}"
 echo -e "${CYAN}${BOLD}====================================================${NC}"
 echo ""
 
@@ -115,8 +115,8 @@ if [ -n "$PACKAGES_TO_INSTALL" ]; then
   echo -e "${GREEN}[OK] Необходимые пакеты успешно установлены.${NC}"
 fi
 
-# 3. Скачивание и распаковка XKeenSwitcher
-echo -e "${BLUE}[2/5] Загрузка XKeenSwitcher с GitHub...${NC}"
+# 3. Скачивание и распаковка xKeenVlessSwitcher
+echo -e "${BLUE}[2/5] Загрузка xKeenVlessSwitcher с GitHub...${NC}"
 
 TMP_DIR="/opt/tmp/xkeen-switcher-install"
 rm -rf "$TMP_DIR"
@@ -261,7 +261,7 @@ cat << 'INIT_EOF' > "$INIT_SCRIPT"
 #!/bin/sh
 ENABLED=yes
 PROCS=node
-DESC="XKeenSwitcher"
+DESC="xKeenVlessSwitcher"
 PIDFILE="/opt/var/run/xkeen-switcher.pid"
 LOGFILE="/opt/var/log/xkeen-switcher.log"
 APP_DIR="/opt/etc/xkeen-switcher"
@@ -350,7 +350,7 @@ chmod +x "$INIT_SCRIPT"
 echo -e "${GREEN}[OK] Служба создана: $INIT_SCRIPT${NC}"
 
 # 6. Запуск службы
-echo -e "${BLUE}[5/5] Запуск XKeenSwitcher...${NC}"
+echo -e "${BLUE}[5/5] Запуск xKeenVlessSwitcher...${NC}"
 "$INIT_SCRIPT" restart
 
 # 7. Определение IP адреса роутера для вывода ссылки
@@ -380,7 +380,7 @@ APP_URL="http://${ROUTER_IP}:${DEFAULT_PORT}"
 
 echo ""
 echo -e "${GREEN}${BOLD}====================================================${NC}"
-echo -e "${GREEN}${BOLD}      XKeenSwitcher успешно установлен и запущен!   ${NC}"
+echo -e "${GREEN}${BOLD}      xKeenVlessSwitcher успешно установлен и запущен!   ${NC}"
 echo -e "${GREEN}${BOLD}====================================================${NC}"
 echo ""
 echo -e "Веб-интерфейс доступен по ссылке:"

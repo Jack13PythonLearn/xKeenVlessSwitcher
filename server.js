@@ -7,10 +7,14 @@ const path = require('path');
 const { exec, execSync, spawn } = require('child_process');
 const zlib = require('zlib');
 const os = require('os');
+const { createSubscriptionManager, publicSubscription, subscriptionUrl } = require('./lib/subscriptions');
+const { mergeChanges } = require('./lib/data-merge');
+const dataSnapshots = new WeakMap();
 
-const DATA_FILE = path.join(__dirname, 'data', 'profiles.json');
-const FAILOVER_LOG_FILE = path.join(__dirname, 'data', 'failover_history.json');
-const AUTOFAILOVER_LOG_FILE = path.join(__dirname, 'data', 'autofailover_history.json');
+const DATA_DIR = process.env.XKEEN_DATA_DIR || path.join(__dirname, 'data');
+const DATA_FILE = path.join(DATA_DIR, 'profiles.json');
+const FAILOVER_LOG_FILE = path.join(DATA_DIR, 'failover_history.json');
+const AUTOFAILOVER_LOG_FILE = path.join(DATA_DIR, 'autofailover_history.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 let isUpdatingApp = false;
@@ -22,11 +26,13 @@ if (!fs.existsSync(path.dirname(DATA_FILE))) {
 
 // Read application version from package.json
 let appVersion = '2.0.2';
+let updateRepository = '';
 try {
   const pkgPath = path.join(__dirname, 'package.json');
   if (fs.existsSync(pkgPath)) {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     if (pkg.version) appVersion = pkg.version;
+    if (/^[\w.-]+\/[\w.-]+$/.test(pkg.updateRepository || '')) updateRepository = pkg.updateRepository;
   }
 } catch (e) {
   console.warn('Could not read package.json version:', e.message);
@@ -250,7 +256,7 @@ function parseVlessUrl(urlStr) {
   }
 
   const u = new URL(cleanStr);
-  const id = u.username;
+  const id = decodeURIComponent(u.username);
   const address = (u.hostname || '').replace(/^\[|\]$/g, '');
   const port = parseInt(u.port, 10);
   if (!id || !address || !port) {
@@ -277,13 +283,12 @@ function parseVlessUrl(urlStr) {
   const fp = sp.get('fp') || 'chrome';
   const sni = sp.get('sni') || '';
   const sid = sp.get('sid') || '';
-  let spx = '/';
-  try {
-    spx = decodeURIComponent(sp.get('spx') || '/');
-  } catch (e) {
-    spx = sp.get('spx') || '/';
-  }
+  const spx = sp.get('spx') || '/';
   const serviceName = sp.get('serviceName') || sp.get('service_name') || '';
+  if (!['tcp', 'raw', 'grpc', 'ws', 'xhttp'].includes(type) || !['none', 'tls', 'reality'].includes(security)) {
+    throw new Error('Неподдерживаемый транспорт или защита VLESS');
+  }
+  if (security === 'reality' && !pbk) throw new Error('Не указан публичный ключ Reality');
 
   // Stream settings
   const streamSettings = {
@@ -304,27 +309,28 @@ function parseVlessUrl(urlStr) {
       serverName: sni,
       fingerprint: fp
     };
+    if (sp.get('alpn')) streamSettings.tlsSettings.alpn = sp.get('alpn').split(',');
+    if (sp.get('pcs')) streamSettings.tlsSettings.pinnedPeerCertSha256 = sp.get('pcs');
+    if (['1', 'true'].includes(sp.get('allowInsecure') || sp.get('insecure'))) streamSettings.tlsSettings.allowInsecure = true;
   }
 
   if (type === 'grpc') {
     streamSettings.grpcSettings = {
       serviceName: serviceName,
-      multiMode: false
+      multiMode: sp.get('mode') === 'multi'
     };
   } else if (type === 'ws') {
-    let wsPath = '/';
-    try {
-      wsPath = decodeURIComponent(sp.get('path') || '/');
-    } catch (e) {
-      wsPath = sp.get('path') || '/';
-    }
+    const wsPath = sp.get('path') || '/';
     streamSettings.wsSettings = {
       path: wsPath,
       headers: {
         Host: sp.get('host') || sni || ''
       }
     };
-  } else if (type === 'tcp') {
+  } else if (type === 'xhttp') {
+    streamSettings.xhttpSettings = { path: sp.get('path') || '/', host: sp.get('host') || '', mode: sp.get('mode') || 'auto' };
+    if (sp.has('extra')) throw new Error('Параметр XHTTP extra пока не поддерживается');
+  } else if (type === 'tcp' || type === 'raw') {
     const headerType = sp.get('headerType');
     if (headerType && headerType !== 'none') {
       streamSettings.tcpSettings = {
@@ -411,6 +417,9 @@ function extractOutboundMetadata(outboundContent) {
         } else if (ob.settings.servers && ob.settings.servers[0]) {
           serverAddress = ob.settings.servers[0].address || '';
           serverPort = ob.settings.servers[0].port || null;
+        } else if (ob.protocol === 'hysteria' && ob.settings.address) {
+          serverAddress = ob.settings.address;
+          serverPort = ob.settings.port || null;
         } else if (ob.settings.peers && ob.settings.peers[0] && ob.settings.peers[0].endpoint) {
           const ep = String(ob.settings.peers[0].endpoint).trim();
           const lastColon = ep.lastIndexOf(':');
@@ -721,7 +730,9 @@ async function measureConnectionHealth(conn, options = {}) {
   const timeout = options.timeout || 3500;
 
   // Step 1: TCP handshake to destination host:port
-  const tcpRes = await measureTcpLatency(conn.serverAddress, conn.serverPort, Math.min(timeout, 3000));
+  const isUdpProxy = conn.protocol === 'hysteria' || conn.network === 'hysteria';
+  const tcpRes = isUdpProxy ? { ok: true, latency: null }
+    : await measureTcpLatency(conn.serverAddress, conn.serverPort, Math.min(timeout, 3000));
   if (!tcpRes.ok) {
     return {
       ok: false,
@@ -750,7 +761,7 @@ async function measureConnectionHealth(conn, options = {}) {
         checkType: 'proxy',
         statusCode: proxyRes.statusCode
       };
-    } else if (proxyRes.skipProxy) {
+    } else if (proxyRes.skipProxy && !isUdpProxy) {
       // If outbound could not be tested due to config formatting, fall back to TCP
       return {
         ok: true,
@@ -774,6 +785,7 @@ async function measureConnectionHealth(conn, options = {}) {
   }
 
   // Fallback to TCP ping if Xray binary is not installed in environment
+  if (isUdpProxy) return { ok: false, latency: null, status: 'unreachable', checkType: 'proxy_unavailable', error: 'Для проверки Hysteria2 нужен Xray с поддержкой этого протокола.' };
   return {
     ok: true,
     latency: tcpRes.latency,
@@ -900,7 +912,7 @@ function downloadFileWithRedirects(fileUrl, destPath, maxRedirects = 6) {
     const client = parsedUrl.protocol === 'https:' ? https : http;
     const options = {
       headers: {
-        'User-Agent': 'XKeenSwitcher-Updater',
+        'User-Agent': 'xKeenVlessSwitcher-Updater',
         'Accept': '*/*'
       },
       timeout: 30000
@@ -1165,7 +1177,7 @@ function parseZipBuffer(buf) {
 }
 
 // Load data from file with v1.0 migration and auto-detection
-function loadData() {
+function loadDataRaw() {
   const detected = detectConfigPaths();
   let data = {
     settings: {
@@ -1216,6 +1228,7 @@ function loadData() {
       }
     },
     connections: [],
+    subscriptions: [],
     routings: [
       { ...SYSTEM_ROUTING_ALL_VPN },
       { ...SYSTEM_ROUTING_EXCEPT_RU }
@@ -1226,6 +1239,7 @@ function loadData() {
     if (fs.existsSync(DATA_FILE)) {
       const content = fs.readFileSync(DATA_FILE, 'utf8');
       const parsed = JSON.parse(content);
+      data.subscriptions = Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [];
 
       data.settings = {
         ...data.settings,
@@ -1301,6 +1315,7 @@ function loadData() {
         data.connections = parsed.connections.map(c => {
           const meta = extractOutboundMetadata(c.outboundContent);
           return {
+            ...c,
             id: c.id,
             name: c.name || 'Подключение',
             description: c.description || '',
@@ -1366,9 +1381,21 @@ function loadData() {
 }
 
 // Save data to file
+function loadData() {
+  const data = loadDataRaw();
+  dataSnapshots.set(data, structuredClone(data));
+  return data;
+}
+
 function saveData(data) {
   try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+    const base = dataSnapshots.get(data);
+    const next = base ? mergeChanges(base, data, loadDataRaw()) : data;
+    const temp = DATA_FILE + '.tmp';
+    fs.writeFileSync(temp, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temp, DATA_FILE);
+    // Track this request's own state; unrelated concurrent additions remain in the file.
+    dataSnapshots.set(data, structuredClone(data));
     return true;
   } catch (err) {
     console.error('Error saving data to profiles.json:', err);
@@ -1924,6 +1951,7 @@ function parseJsonBody(req) {
 // Initialize data and port
 const initialData = loadData();
 const PORT = process.env.PORT || (initialData.settings && initialData.settings.port) || 3000;
+const subscriptions = createSubscriptionManager({ loadData, saveData, parseVlessUrl });
 
 // Create HTTP Server
 const server = http.createServer(async (req, res) => {
@@ -1944,12 +1972,30 @@ const server = http.createServer(async (req, res) => {
   // GET /api/data
   if (urlParts === '/api/data' && req.method === 'GET') {
     const data = loadData();
-    return sendJson(res, 200, { ...data, version: appVersion });
+    return sendJson(res, 200, { ...data, subscriptions: data.subscriptions.map(x => publicSubscription(x, data.connections)), version: appVersion, updateRepository });
   }
 
   // GET /api/version
   if (urlParts === '/api/version' && req.method === 'GET') {
-    return sendJson(res, 200, { version: appVersion });
+    return sendJson(res, 200, { version: appVersion, updateRepository });
+  }
+
+  if (urlParts === '/api/subscriptions' || urlParts.startsWith('/api/subscriptions/')) {
+    try {
+      if (urlParts === '/api/subscriptions') {
+        if (req.method === 'GET') return sendJson(res, 200, { subscriptions: subscriptions.list() });
+        if (req.method === 'POST') return sendJson(res, 201, await subscriptions.add(await parseJsonBody(req)));
+      }
+      const match = urlParts.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|exclusions))?$/);
+      if (match) {
+        const [, id, action] = match;
+        if (req.method === 'POST' && action === 'refresh') return sendJson(res, 200, { stats: await subscriptions.refresh(id) });
+        if (req.method === 'DELETE' && action === 'exclusions') { subscriptions.resetExclusions(id); return sendJson(res, 200, { message: 'Исключения сброшены. Обновите подписку для возврата серверов.' }); }
+        if (req.method === 'PUT' && !action) { subscriptions.edit(id, await parseJsonBody(req)); return sendJson(res, 200, { message: 'Подписка сохранена' }); }
+        if (req.method === 'DELETE' && !action) { subscriptions.remove(id); return sendJson(res, 200, { message: 'Подписка удалена, подключения сохранены' }); }
+      }
+      return sendJson(res, 404, { error: 'Действие не найдено' });
+    } catch (err) { return sendJson(res, 400, { error: err.message }); }
   }
 
   // POST /api/app/update - Update application to new version from GitHub
@@ -1962,7 +2008,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await parseJsonBody(req).catch(() => ({}));
       const requestedTag = body.tag || (body.version ? (body.version.startsWith('v') ? body.version : 'v' + body.version) : null);
-      const tarballUrlFromBody = body.tarball_url;
+      if (!updateRepository) throw new Error('Репозиторий обновлений не настроен');
+      if (requestedTag && !/^[\w.-]+$/.test(requestedTag)) throw new Error('Некорректная версия обновления');
 
       // 1. Создание резервной копии профилей и настроек
       if (fs.existsSync(DATA_FILE)) {
@@ -1979,12 +2026,12 @@ const server = http.createServer(async (req, res) => {
       }
 
       // 2. Определение URL для загрузки
-      let downloadUrl = tarballUrlFromBody;
+      let downloadUrl;
       if (!downloadUrl) {
         if (requestedTag && requestedTag !== 'latest') {
-          downloadUrl = `https://github.com/sergey1900/XKeenSwitcher/archive/refs/tags/${requestedTag}.tar.gz`;
+          downloadUrl = `https://github.com/${updateRepository}/archive/refs/tags/${requestedTag}.tar.gz`;
         } else {
-          downloadUrl = 'https://github.com/sergey1900/XKeenSwitcher/archive/refs/heads/main.tar.gz';
+          downloadUrl = `https://github.com/${updateRepository}/archive/refs/heads/main.tar.gz`;
         }
       }
 
@@ -2568,6 +2615,11 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 404, { error: 'Подключение не найдено' });
     }
 
+    const removed = data.connections[index];
+    const source = data.subscriptions.find(x => x.id === removed.subscriptionId);
+    if (source && removed.subscriptionKey) {
+      source.excluded = [...(source.excluded || []).filter(x => x.key !== removed.subscriptionKey), { key: removed.subscriptionKey, name: removed.name }];
+    }
     data.connections.splice(index, 1);
     if (data.settings.activeConnectionId === id) {
       data.settings.activeConnectionId = null;
@@ -2923,6 +2975,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     data.routings.splice(index, 1);
+    for (const sub of data.subscriptions) if (sub.routingId === id) sub.routingId = 'routing_all_vpn';
     saveData(data);
     return sendJson(res, 200, { message: 'Конфигурация маршрутизации удалена' });
   }
@@ -2935,11 +2988,12 @@ const server = http.createServer(async (req, res) => {
     const nowStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
     const backupPayload = {
-      app: 'XKeenSwitcher',
+      app: 'xKeenVlessSwitcher',
       version: appVersion,
       exportedAt: new Date().toISOString(),
       settings: data.settings,
       connections: data.connections,
+      subscriptions: data.subscriptions,
       routings: data.routings
     };
 
@@ -2947,7 +3001,7 @@ const server = http.createServer(async (req, res) => {
       { filename: 'backup.json', content: JSON.stringify(backupPayload, null, 2) },
       {
         filename: 'README.txt',
-        content: `XKeenSwitcher 2.0 Резервная копия\nСоздана: ${new Date().toLocaleString()}\nПодключений: ${data.connections.length}\nРоутингов: ${data.routings.length}\nВерсия: ${appVersion}\n`
+        content: `xKeenVlessSwitcher 2.0 Резервная копия\nСоздана: ${new Date().toLocaleString()}\nПодключений: ${data.connections.length}\nРоутингов: ${data.routings.length}\nВерсия: ${appVersion}\n`
       }
     ];
 
@@ -3080,6 +3134,10 @@ const server = http.createServer(async (req, res) => {
           targetRoutingId = 'routing_all_vpn';
         }
         return {
+          subscriptionId: c.subscriptionId,
+          subscriptionKey: c.subscriptionKey,
+          subscriptionName: c.subscriptionName,
+          subscriptionMissing: c.subscriptionMissing,
           id: c.id || ('conn_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4)),
           name: c.name || 'Подключение',
           description: c.description || '',
@@ -3112,6 +3170,10 @@ const server = http.createServer(async (req, res) => {
       const mergedData = {
         settings: newSettings,
         connections: restoredConnections,
+        subscriptions: Array.isArray(restoreData.subscriptions) ? restoreData.subscriptions.map(s => ({
+          ...s, url: subscriptionUrl(s.url).href, updatedAt: require('crypto').randomUUID(),
+          routingId: restoredRoutings.some(r => r.id === s.routingId) ? s.routingId : 'routing_all_vpn'
+        })) : [],
         routings: restoredRoutings
       };
 
@@ -3310,11 +3372,15 @@ const server = http.createServer(async (req, res) => {
 
 const HOST = process.env.HOST || '0.0.0.0';
 
-server.listen(PORT, HOST, () => {
+if (require.main === module) server.listen(PORT, HOST, () => {
   console.log(`===================================================`);
-  console.log(`🚀 XKeenSwitcher 2.0 запущен на http://${HOST}:${PORT}`);
+  console.log(`🚀 xKeenVlessSwitcher 2.0 запущен на http://${HOST}:${PORT}`);
   console.log(`===================================================`);
-  startFailoverWatchdog();
-  startAutoFailoverWatchdog();
-  setTimeout(sweepGeoIpForConnections, 2000);
+  if (!process.env.XKEEN_DISABLE_BACKGROUND) {
+    startFailoverWatchdog();
+    startAutoFailoverWatchdog();
+    subscriptions.start();
+    setTimeout(sweepGeoIpForConnections, 2000);
+  }
 });
+module.exports = { server, loadData, saveData, parseVlessUrl, extractOutboundMetadata, measureConnectionHealth, subscriptions };

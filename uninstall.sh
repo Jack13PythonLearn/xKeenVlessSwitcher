@@ -1,6 +1,6 @@
 #!/bin/sh
 # ==============================================================================
-# XKeenSwitcher - Скрипт удаления для среды Entware (Keenetic / OpenWrt)
+# xKeenVlessSwitcher - Скрипт удаления для среды Entware (Keenetic / OpenWrt)
 # ==============================================================================
 
 set -e
@@ -20,7 +20,7 @@ NC='\033[0m'
 
 echo ""
 echo -e "${CYAN}${BOLD}====================================================${NC}"
-echo -e "${CYAN}${BOLD}         Удаление XKeenSwitcher                     ${NC}"
+echo -e "${CYAN}${BOLD}         Удаление xKeenVlessSwitcher                     ${NC}"
 echo -e "${CYAN}${BOLD}====================================================${NC}"
 echo ""
 
@@ -83,6 +83,6 @@ fi
 
 echo ""
 echo -e "${GREEN}${BOLD}====================================================${NC}"
-echo -e "${GREEN}${BOLD}       XKeenSwitcher успешно удален!                ${NC}"
+echo -e "${GREEN}${BOLD}       xKeenVlessSwitcher успешно удален!                ${NC}"
 echo -e "${GREEN}${BOLD}====================================================${NC}"
 echo ""

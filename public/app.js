@@ -1,5 +1,5 @@
 // ==============================================================================
-// XKeenSwitcher 2.0 - Frontend Application
+// xKeenVlessSwitcher 2.0 - Frontend Application
 // ==============================================================================
 
 // Global Application State
@@ -70,6 +70,8 @@ document.addEventListener('DOMContentLoaded', () => {
 // Switch Main Navigation Tabs
 function switchMainTab(tab) {
   currentTab = tab;
+  document.getElementById('tab-btn-subscriptions').classList.toggle('active', tab === 'subscriptions');
+  document.getElementById('section-subscriptions').classList.toggle('hidden', tab !== 'subscriptions');
   document.getElementById('tab-btn-connections').classList.toggle('active', tab === 'connections');
   document.getElementById('tab-btn-routings').classList.toggle('active', tab === 'routings');
   document.getElementById('section-connections').classList.toggle('hidden', tab !== 'connections');
@@ -89,6 +91,7 @@ async function loadData() {
     if (data.version) {
       const verEl = document.getElementById('app-version-text');
       if (verEl) verEl.textContent = `v${data.version}`;
+      document.getElementById('header-version').textContent = `v${data.version}`;
     }
 
     // Check for updates on GitHub in the background
@@ -96,6 +99,7 @@ async function loadData() {
 
     renderConnections();
     renderRoutings();
+    renderSubscriptions();
     populateRoutingSelects();
     pollFailoverStatus();
     pollAutoFailoverStatus();
@@ -203,6 +207,7 @@ function formatNetworkName(net) {
     case 'ds': return 'DomainSocket';
     case 'wireguard': return 'WireGuard';
     case 'udp': return 'UDP';
+    case 'hysteria': return 'QUIC / UDP';
     default: return n.toUpperCase();
   }
 }
@@ -310,7 +315,7 @@ function renderConnections() {
           <!-- BADGES ROW -->
           <div class="conn-badges-row">
             <span class="conn-badge badge-host" title="Хост:Порт">${escapeHtml(conn.serverAddress || '-')}:${conn.serverPort || '-'}</span>
-            <span class="conn-badge badge-proto" title="Протокол">${escapeHtml((conn.protocol || 'vless').toUpperCase())}</span>
+            <span class="conn-badge badge-proto" title="Протокол">${conn.protocol === 'hysteria' ? 'HYSTERIA2' : escapeHtml((conn.protocol || 'vless').toUpperCase())}</span>
             ${netBadgeHtml}
             ${secBadgeHtml}
           </div>
@@ -339,6 +344,7 @@ function renderConnections() {
 
           <!-- COMMENT (IF ANY) -->
           ${conn.description ? `<div class="conn-comment">${escapeHtml(conn.description)}</div>` : ''}
+          ${conn.subscriptionId ? `<div class="conn-comment">Подписка: ${escapeHtml((appData.subscriptions || []).find(s => s.id === conn.subscriptionId)?.name || '')}${conn.subscriptionMissing ? ' · Сервер исчез из подписки; сохранён для проверки' : ''}</div>` : ''}
         </div>
 
         <!-- FOOTER ACTIONS -->
@@ -353,7 +359,7 @@ function renderConnections() {
           </div>
 
           <div class="conn-footer-actions">
-            <button class="btn btn-secondary btn-sm btn-icon" onclick="openQrModal('${conn.id}')" title="Показать QR-код VLESS">
+            <button class="btn btn-secondary btn-sm btn-icon" onclick="openQrModal('${conn.id}')" title="Показать QR-код подключения">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M7 17h.01M17 17h.01M7 7h.01M17 7h.01"/></svg>
             </button>
             <button class="btn btn-secondary btn-sm btn-icon" onclick="openEditConnectionModal('${conn.id}')" title="Редактировать параметры и outbound.json">
@@ -752,7 +758,8 @@ async function activateConnection(id) {
 
 // Delete Connection
 async function deleteConnection(id, name) {
-  if (!confirm(`Удалить подключение "${name}"?`)) return;
+  const fromSubscription = appData.connections.find(c => c.id === id)?.subscriptionId;
+  if (!confirm(`Удалить подключение "${name}"?${fromSubscription ? '\nОно будет исключено из последующих обновлений подписки.' : ''}`)) return;
 
   try {
     const res = await fetch(`/api/connections/${id}`, {
@@ -783,6 +790,18 @@ function getConnectionVlessUrl(conn) {
     const clean = stripComments(conn.outboundContent);
     const parsed = JSON.parse(clean);
     const list = Array.isArray(parsed.outbounds) ? parsed.outbounds : [parsed];
+    const hy = list.find(o => o?.protocol === 'hysteria' && o.settings?.address);
+    if (hy) {
+      const tls = hy.streamSettings?.tlsSettings || {};
+      const auth = hy.streamSettings?.hysteriaSettings?.auth;
+      if (!auth) return '';
+      const params = new URLSearchParams();
+      if (tls.serverName) params.set('sni', tls.serverName);
+      if (tls.alpn?.length) params.set('alpn', tls.alpn.join(','));
+      if (tls.allowInsecure) params.set('insecure', '1');
+      const host = hy.settings.address.includes(':') ? `[${hy.settings.address}]` : hy.settings.address;
+      return `hysteria2://${encodeURIComponent(auth)}@${host}:${hy.settings.port || 443}?${params}#${encodeURIComponent(conn.name || 'Hysteria2')}`;
+    }
     const ob = list.find(o => o && o.protocol === 'vless' && o.settings && o.settings.vnext && o.settings.vnext[0]);
     if (!ob) return '';
 
@@ -817,6 +836,8 @@ function getConnectionVlessUrl(conn) {
       if (ts.serverName) params.set('sni', ts.serverName);
       if (ts.fingerprint) params.set('fp', ts.fingerprint);
       if (ts.alpn && Array.isArray(ts.alpn)) params.set('alpn', ts.alpn.join(','));
+      if (ts.pinnedPeerCertSha256) params.set('pcs', ts.pinnedPeerCertSha256);
+      if (ts.allowInsecure) params.set('insecure', '1');
     }
 
     if (type === 'ws' && ss.wsSettings) {
@@ -824,12 +845,15 @@ function getConnectionVlessUrl(conn) {
       if (ss.wsSettings.headers && ss.wsSettings.headers.Host) params.set('host', ss.wsSettings.headers.Host);
     } else if (type === 'grpc' && ss.grpcSettings) {
       if (ss.grpcSettings.serviceName) params.set('serviceName', ss.grpcSettings.serviceName);
+      if (ss.grpcSettings.multiMode) params.set('mode', 'multi');
+    } else if (type === 'xhttp' && ss.xhttpSettings) {
+      for (const key of ['host', 'path', 'mode']) if (ss.xhttpSettings[key]) params.set(key, ss.xhttpSettings[key]);
     } else if (type === 'tcp' && ss.tcpSettings && ss.tcpSettings.header && ss.tcpSettings.header.type) {
       params.set('headerType', ss.tcpSettings.header.type);
     }
 
     const hashName = encodeURIComponent(conn.name || 'VLESS');
-    return `vless://${uuid}@${address}:${port}?${params.toString()}#${hashName}`;
+    return `vless://${encodeURIComponent(uuid)}@${address.includes(':') ? `[${address}]` : address}:${port}?${params.toString()}#${hashName}`;
   } catch (e) {
     console.error('Error generating VLESS URL:', e);
     return '';
@@ -2398,7 +2422,7 @@ function escapeHtml(str) {
 
 function escapeJs(str) {
   if (!str) return '';
-  return String(str).replace(/'/g, "\\'").replace(/"/g, '\\"');
+  return escapeHtml(JSON.stringify(String(str)).slice(1, -1).replace(/'/g, "\\'").replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'));
 }
 
 function formatTime(isoStr) {
@@ -2431,13 +2455,14 @@ let updatePollTimer = null;
 
 async function checkForUpdates(currentVersion) {
   if (updateCheckRan) return;
+  if (!appData.updateRepository) return;
   updateCheckRan = true;
   if (currentVersion) currentAppVersion = String(currentVersion).trim();
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch('https://api.github.com/repos/sergey1900/XKeenSwitcher/releases/latest', {
+    const res = await fetch(`https://api.github.com/repos/${appData.updateRepository}/releases/latest`, {
       headers: { 'Accept': 'application/vnd.github.v3+json' },
       signal: controller.signal
     });
