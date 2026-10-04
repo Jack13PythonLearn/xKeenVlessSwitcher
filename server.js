@@ -7,7 +7,7 @@ const path = require('path');
 const { exec, execSync, spawn } = require('child_process');
 const zlib = require('zlib');
 const os = require('os');
-const { createSubscriptionManager, publicSubscription, subscriptionUrl } = require('./lib/subscriptions');
+const { createSubscriptionManager, publicSubscription, subscriptionUrl, connectionIdentity } = require('./lib/subscriptions');
 const { mergeChanges } = require('./lib/data-merge');
 const dataSnapshots = new WeakMap();
 
@@ -2124,12 +2124,12 @@ const server = http.createServer(async (req, res) => {
       // 10. Отложенный перезапуск веб-сервера
       const initScript = '/opt/etc/init.d/S99xkeen-switcher';
       if (fs.existsSync(initScript)) {
-        const restartCmd = `sh -c "sleep 1.5 && ${initScript} restart >/dev/null 2>&1 &"`;
+        const restartCmd = `sh -c "sleep 2 && ${initScript} restart >/dev/null 2>&1 &"`;
         exec(restartCmd);
       } else {
         const nodeBin = process.execPath || process.argv[0] || 'node';
         const scriptPath = path.join(__dirname, 'server.js');
-        const restartCmd = `sh -c "sleep 1.5 && kill -9 ${process.pid} && '${nodeBin}' '${scriptPath}' >/dev/null 2>&1 &"`;
+        const restartCmd = `sh -c "sleep 2 && kill -9 ${process.pid} && '${nodeBin}' '${scriptPath}' >/dev/null 2>&1 &"`;
         exec(restartCmd);
       }
 
@@ -2618,7 +2618,9 @@ const server = http.createServer(async (req, res) => {
     const removed = data.connections[index];
     const source = data.subscriptions.find(x => x.id === removed.subscriptionId);
     if (source && removed.subscriptionKey) {
-      source.excluded = [...(source.excluded || []).filter(x => x.key !== removed.subscriptionKey), { key: removed.subscriptionKey, name: removed.name }];
+      source.excluded = [...(source.excluded || []).filter(x => x.key !== removed.subscriptionKey), {
+        key: removed.subscriptionKey, identity: removed.subscriptionIdentity || connectionIdentity(removed.outboundContent), name: removed.name
+      }];
     }
     data.connections.splice(index, 1);
     if (data.settings.activeConnectionId === id) {
@@ -3136,6 +3138,7 @@ const server = http.createServer(async (req, res) => {
         return {
           subscriptionId: c.subscriptionId,
           subscriptionKey: c.subscriptionKey,
+          subscriptionIdentity: c.subscriptionIdentity,
           subscriptionName: c.subscriptionName,
           subscriptionMissing: c.subscriptionMissing,
           id: c.id || ('conn_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4)),
@@ -3374,7 +3377,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 if (require.main === module) server.listen(PORT, HOST, () => {
   console.log(`===================================================`);
-  console.log(`🚀 xKeenVlessSwitcher 2.0 запущен на http://${HOST}:${PORT}`);
+  console.log(`🚀 xKeenVlessSwitcher ${appVersion} запущен на http://${HOST}:${PORT}`);
   console.log(`===================================================`);
   if (!process.env.XKEEN_DISABLE_BACKGROUND) {
     startFailoverWatchdog();

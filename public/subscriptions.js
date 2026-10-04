@@ -17,7 +17,7 @@ function renderSubscriptions() {
       <p class="subscription-source">${escapeHtml(sub.source)}</p>
       <div class="subscription-metrics"><span><strong>${sub.count || 0}</strong> серверов</span><span>${escapeHtml(subscriptionIntervals[sub.intervalHours] || 'Вручную')}</span><span>Исключено: ${(sub.excluded || []).length}</span></div>
       <p class="help-text">Последнее обновление: ${sub.lastUpdatedAt ? escapeHtml(new Date(sub.lastUpdatedAt).toLocaleString()) : 'ещё не было'}</p>
-      ${stats ? `<p class="help-text">Добавлено: ${stats.added}; привязано: ${stats.adopted}; удалено из подписки: ${stats.removed}.</p>` : ''}
+      ${stats ? `<p class="help-text">Добавлено: ${stats.added}; привязано: ${stats.adopted}; обновлено: ${stats.updated || 0}; удалено из подписки: ${stats.removed}.</p>` : ''}
       ${stats?.protected ? `<p class="help-text">Сохранено отсутствующих серверов: ${stats.protected}. Они используются или изменены вручную — проверьте их во вкладке «Подключения».</p>` : ''}
       ${stats?.unsupported?.length ? `<p class="help-text">Пропущены протоколы: ${escapeHtml(stats.unsupported.join(', '))}. Отсутствующие серверы сохранены.</p>` : ''}
       ${sub.lastError ? `<p class="subscription-error" role="alert">${escapeHtml(sub.lastError)}</p>` : ''}

@@ -9,7 +9,7 @@ const zlib = require('node:zlib');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xkeen-subscriptions-test-'));
 process.env.XKEEN_DATA_DIR = dir;
 const { parseVlessUrl, extractOutboundMetadata, loadData, saveData, server } = require('../server');
-const { parseSubscription, connectionKey, createSubscriptionManager, reconcile, downloadSubscription, isPublicAddress, subscriptionUrl } = require('../lib/subscriptions');
+const { parseSubscription, connectionKey, connectionIdentity, createSubscriptionManager, reconcile, downloadSubscription, isPublicAddress, subscriptionUrl } = require('../lib/subscriptions');
 const { mergeChanges } = require('../lib/data-merge');
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -120,6 +120,71 @@ test('deleted-node exclusions survive refresh and migration only adopts the reta
   assert.equal(stats.excluded, 1);
   assert.equal(reconcile(state, 's', parsed).excluded, 1);
   assert.equal(state.connections.length, 1);
+});
+
+test('rotating SNI updates an existing profile without changing its ID, custom name or routing', () => {
+  const state = data();
+  const first = parse(vless().replace('security=reality', 'security=tls'));
+  reconcile(state, 's', first);
+  const conn = state.connections[0];
+  conn.name = 'Custom';
+  conn.routingId = 'personal';
+  state.settings.activeConnectionId = conn.id;
+  const next = parse(vless().replace('security=reality', 'security=tls').replace('sni=example.com', 'sni=rotated.example.com'));
+  const stats = reconcile(state, 's', next);
+  assert.equal(stats.updated, 1);
+  assert.equal(stats.added, 0);
+  assert.equal(stats.removed, 0);
+  assert.equal(state.connections.length, 1);
+  assert.equal(state.connections[0].id, state.settings.activeConnectionId);
+  assert.equal(state.connections[0].name, 'Custom');
+  assert.equal(state.connections[0].routingId, 'personal');
+  assert.equal(state.connections[0].sni, 'rotated.example.com');
+  assert.equal(state.connections[0].subscriptionKey, next.nodes[0].key);
+  assert.equal(reconcile(state, 's', next).updated, 0);
+});
+
+test('migration adopts an existing profile after SNI rotation and keeps excluded nodes excluded', () => {
+  const state = data();
+  state.connections.push({ ...parse(vless()).nodes[0], id: 'kept', routingId: 'custom' });
+  const feed = vless() + '\n' + vless('excluded.example.com', 'Excluded');
+  const migrated = reconcile(state, 's', parse(feed.replaceAll('sni=example.com', 'sni=first.example.com')), { adoptExistingOnly: true });
+  assert.equal(migrated.adopted, 1);
+  assert.equal(migrated.excluded, 1);
+  const refreshed = reconcile(state, 's', parse(feed.replaceAll('sni=example.com', 'sni=second.example.com')));
+  assert.equal(refreshed.added, 0);
+  assert.equal(refreshed.excluded, 1);
+  assert.equal(state.connections.length, 1);
+  assert.equal(state.connections[0].id, 'kept');
+});
+
+test('simultaneous SNI variants stay distinct and ambiguous variants are not adopted heuristically', () => {
+  const state = data();
+  const first = vless('vpn.example.com', 'First');
+  const second = vless('vpn.example.com', 'Second').replace('sni=example.com', 'sni=second.example.com');
+  const parsed = parse(first + '\n' + second);
+  assert.equal(connectionIdentity(parsed.nodes[0].outboundContent), connectionIdentity(parsed.nodes[1].outboundContent));
+  reconcile(state, 's', parsed);
+  const ids = state.connections.map(x => x.id);
+  assert.equal(reconcile(state, 's', parsed).retained, 2);
+  assert.deepEqual(state.connections.map(x => x.id), ids);
+  const manualState = data();
+  manualState.connections.push({ ...parse(first.replace('sni=example.com', 'sni=manual.example.com')).nodes[0], id: 'manual' });
+  assert.equal(reconcile(manualState, 's', parsed, { adoptExistingOnly: true }).adopted, 0);
+  assert.equal(manualState.connections.length, 1);
+});
+
+test('a manually edited SNI is preserved when the provider rotates it', () => {
+  const state = data();
+  reconcile(state, 's', parse(vless()));
+  const manualContent = parse(vless().replace('sni=example.com', 'sni=manual.example.com')).nodes[0].outboundContent;
+  state.connections[0].outboundContent = manualContent;
+  const stats = reconcile(state, 's', parse(vless().replace('sni=example.com', 'sni=provider.example.com')));
+  assert.equal(stats.protected, 1);
+  assert.equal(stats.added, 0);
+  assert.equal(state.connections.length, 1);
+  assert.equal(state.connections[0].outboundContent, manualContent);
+  assert.equal(state.connections[0].subscriptionMissing, true);
 });
 test('failed fetch preserves servers and source is redacted in the API list', async () => {
   const h = harness(async () => { throw new Error('Network failure'); });
