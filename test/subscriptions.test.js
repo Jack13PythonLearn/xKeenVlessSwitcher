@@ -357,3 +357,10 @@ test('download returns only final response metadata and keeps the string API com
     assert.equal(await downloadSubscription(url, { allowPrivate: true }), vless());
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
+
+test('merged routing replaces only the explicit built-in preset and remaps connections and subscriptions', () => {
+ const {applyRoutingReplacements}=require('../lib/routing-replacements');
+ const state={routings:[{id:'routing_all_vpn',isSystem:true},{id:'routing_except_ru',isSystem:true},{id:'merged',isSystem:false,replacesSystemRouting:'routing_except_ru'}],connections:[{routingId:'routing_except_ru'},{routingId:'routing_all_vpn'}],subscriptions:[{routingId:'routing_except_ru'}]};
+ applyRoutingReplacements(state);assert.equal(state.routings.length,2);assert.equal(state.connections[0].routingId,'merged');assert.equal(state.connections[1].routingId,'routing_all_vpn');assert.equal(state.subscriptions[0].routingId,'merged');
+ const unchanged={routings:[{id:'routing_except_ru',isSystem:true},{id:'custom',isSystem:false}],connections:[]};applyRoutingReplacements(unchanged);assert.equal(unchanged.routings.length,2);
+});

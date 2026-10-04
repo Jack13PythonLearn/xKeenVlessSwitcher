@@ -9,6 +9,7 @@ const zlib = require('zlib');
 const os = require('os');
 const { createSubscriptionManager, publicSubscription, subscriptionUrl } = require('./lib/subscriptions');
 const { mergeChanges } = require('./lib/data-merge');
+const { applyRoutingReplacements } = require('./lib/routing-replacements');
 const dataSnapshots = new WeakMap();
 
 const DATA_DIR = process.env.XKEEN_DATA_DIR || path.join(__dirname, 'data');
@@ -1371,13 +1372,13 @@ function loadDataRaw() {
         }
       }
 
-      return data;
+      return applyRoutingReplacements(data);
     }
   } catch (err) {
     console.error('Error loading profiles.json:', err);
   }
 
-  return data;
+  return applyRoutingReplacements(data);
 }
 
 // Save data to file
@@ -3098,6 +3099,7 @@ const server = http.createServer(async (req, res) => {
           description: r.description || '',
           isSystem: Boolean(r.isSystem || r.id === 'routing_all_vpn' || r.id === 'routing_except_ru' || r.name === 'Всё через VPN' || r.name === 'Всё через VPN кроме РФ' || r.name === 'Все кроме РФ через VPN'),
           content: r.content || '',
+          replacesSystemRouting: r.replacesSystemRouting === 'routing_except_ru' ? r.replacesSystemRouting : undefined,
           createdAt: r.createdAt || new Date().toISOString()
         }));
       }
