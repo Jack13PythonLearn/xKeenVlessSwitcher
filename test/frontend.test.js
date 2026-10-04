@@ -77,3 +77,17 @@ test('subscription info handles unknown and unlimited traffic, expiry, clamps pr
   assert.match(scope.subscriptionInfoHtml({ total: 0 }), /Расход не указан/);
   assert.match(scope.subscriptionInfoHtml({ upload: 0, download: 0 }), /Лимит не указан/);
 });
+
+test('compact list filters LTE by explicit names, groups LTE first and preserves details', () => {
+ const grid = { innerHTML: '' }; const elements = { 'connections-type-select': {}, 'connections-sort-select': {} };
+ const ctx = { console, connectionsGrid: grid, connectionsCount: {}, connectionsBadge: {}, emptyConnectionsState: {classList:{toggle(){}}}, document:{getElementById:id=>elements[id]}, currentSort:'default', pingingConnectionIds:new Set(), getSortedConnections:list=>[...list], escapeHtml:scope.escapeHtml, escapeJs:scope.escapeJs, getConnectionDisplay:scope.getConnectionDisplay, formatNetworkName:()=> 'TCP', stripComments:x=>x, formatTime:x=>x, appData:{settings:{activeConnectionId:'normal'},routings:[],subscriptions:[],connections:[{id:'normal',name:'⚡ Германия',countryCode:'DE'},{id:'lte',name:'🇫🇮 🎮 LTE #1'},{id:'word',name:'Alternative'},{id:'renamed',name:'My server',subscriptionName:'LTE - Mobile'}]} };
+ vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('let connectionTypeFilter'),source.indexOf('// Render Routings Grid')),ctx);
+ assert.equal(ctx.isLteConnection({name:'Alternative'}),false);
+ assert.equal(ctx.isLteConnection({name:'⚡ ⭐ Germany'}),false);
+ assert.equal(ctx.isLteConnection({name:'LTE1'}),true);
+ ctx.renderConnections();assert.ok(grid.innerHTML.indexOf('card-conn-lte')<grid.innerHTML.indexOf('card-conn-normal'));
+ assert.match(grid.innerHTML,/country-flag-fi/);assert.match(grid.innerHTML,/Активировать/);assert.match(grid.innerHTML,/conn-details[^>]+hidden/);
+ ctx.onConnectionTypeChange('lte');assert.ok(grid.innerHTML.includes('card-conn-renamed'));assert.ok(!grid.innerHTML.includes('card-conn-normal'));
+ ctx.onConnectionTypeChange('regular');assert.ok(grid.innerHTML.includes('card-conn-normal'));assert.ok(!grid.innerHTML.includes('card-conn-lte'));
+ ctx.onConnectionTypeChange('all');assert.ok(grid.innerHTML.includes('card-conn-lte'));
+});

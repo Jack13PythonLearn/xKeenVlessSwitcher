@@ -215,34 +215,46 @@ function formatNetworkName(net) {
   }
 }
 
-// Render Connections Grid
+let connectionTypeFilter = 'all';
+const expandedConnections = new Set();
+function isLteConnection(conn) {
+  return /(?:^|[^a-zа-я])(?:lte|лте)(?=$|[^a-zа-я])/iu.test(String(conn.subscriptionName || '') + ' ' + String(conn.name || ''));
+}
+function filterConnections(list, type = connectionTypeFilter) {
+  return list.filter(conn => type === 'lte' ? isLteConnection(conn) : type === 'regular' ? !isLteConnection(conn) : true);
+}
+function onConnectionTypeChange(value) {
+  connectionTypeFilter = ['all', 'lte', 'regular'].includes(value) ? value : 'all';
+  renderConnections();
+}
+function toggleConnectionDetails(id) {
+  const row = document.getElementById('card-conn-' + id);
+  if (!row) return;
+  const details = row.querySelector('.conn-details');
+  details.hidden = !details.hidden;
+  row.querySelector('.conn-details-toggle').setAttribute('aria-expanded', String(!details.hidden));
+  if (details.hidden) expandedConnections.delete(id); else expandedConnections.add(id);
+}
 function renderConnections() {
   if (!connectionsGrid) return;
   const rawList = appData.connections || [];
-  const activeId = appData.settings ? appData.settings.activeConnectionId : null;
-
+  const activeId = appData.settings?.activeConnectionId;
   const sortSelect = document.getElementById('connections-sort-select');
-  if (sortSelect && sortSelect.value !== currentSort) {
-    sortSelect.value = currentSort;
-  }
-
+  if (sortSelect) sortSelect.value = currentSort;
+  const filterSelect = document.getElementById('connections-type-select');
+  if (filterSelect) filterSelect.value = connectionTypeFilter;
   if (connectionsCount) connectionsCount.textContent = rawList.length;
   if (connectionsBadge) connectionsBadge.textContent = rawList.length;
-
-  if (rawList.length === 0) {
-    connectionsGrid.innerHTML = '';
-    if (emptyConnectionsState) emptyConnectionsState.classList.remove('hidden');
+  if (emptyConnectionsState) emptyConnectionsState.classList.toggle('hidden', rawList.length > 0);
+  const sorted = getSortedConnections(filterConnections(rawList), activeId);
+  const list = [...sorted.filter(isLteConnection), ...sorted.filter(c => !isLteConnection(c))];
+  if (!list.length) {
+    connectionsGrid.innerHTML = rawList.length ? '<p class="connection-filter-empty">В этой группе нет серверов.</p>' : '';
     return;
   }
-
-  if (emptyConnectionsState) emptyConnectionsState.classList.add('hidden');
-
-  const list = getSortedConnections(rawList, activeId);
-
-  connectionsGrid.innerHTML = list.map(conn => {
-    const isActive = (conn.id === activeId);
-    const isChecking = pingingConnectionIds.has(conn.id) || isPingingAll;
-
+  connectionsGrid.innerHTML = list.map((conn, index) => {
+    const isActive = conn.id === activeId;
+    const isChecking = pingingConnectionIds.has(conn.id);
     // Security & SNI
     let secBadgeHtml = '';
     if (conn.security === 'reality') {
@@ -303,19 +315,27 @@ function renderConnections() {
       return `<option value="${r.id}" ${sel}>${escapeHtml(r.name)}</option>`;
     }).join('');
 
+
     const display = getConnectionDisplay(conn);
-    const { flag, countryTitle } = display;
-    const flagHtml = flag ? `<span class="conn-flag" title="${escapeHtml(countryTitle)}">${flag}</span>` : '';
-
-    return `
-      <div class="conn-card glass-card ${isActive ? 'active-conn' : ''}" id="card-conn-${conn.id}">
-        <div>
-          <div class="conn-card-header">
-            <h3 class="conn-title">${flagHtml ? flagHtml + ' ' : ''}<span>${escapeHtml(display.name)}</span></h3>
-            ${isActive ? `<span class="active-pill-badge"><span class="status-dot"></span> Активно</span>` : ''}
-          </div>
-
-          <!-- BADGES ROW -->
+    const flagHtml = display.countryCode && /^[A-Z]{2}$/.test(display.countryCode) ? '<span class="country-flag country-flag-' + display.countryCode.toLowerCase() + '" role="img" aria-label="' + escapeHtml(display.countryTitle) + '"></span>' : '';
+    const lte = isLteConnection(conn);
+    const heading = index === 0 || lte !== isLteConnection(list[index - 1]) ? '<h3 class="connection-group-heading">' + (lte ? 'LTE-серверы' : 'Обычные серверы') + '</h3>' : '';
+    const detailsOpen = expandedConnections.has(conn.id);
+    return `${heading}<article class="connection-row ${isActive ? 'active-conn' : ''}" id="card-conn-${conn.id}">
+      <h3 class="conn-title">${flagHtml}<span class="conn-name" title="${escapeHtml(display.name)}">${escapeHtml(display.name)}</span>${lte && !/(?:^|[^a-zа-я])(?:lte|лте)(?=$|[^a-zа-я])/iu.test(display.name) ? '<span class="connection-lte-badge">LTE</span>' : ''}</h3>
+      <div class="ping-status-wrap">${pingHtml}</div>
+      ${isActive ? '<span class="connection-active-label">✓ Активно</span>' : `<button class="btn btn-activate" onclick="activateConnection('${conn.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Активировать</button>`}
+                <div class="conn-footer-actions"><button class="btn btn-secondary btn-sm btn-icon" onclick="checkConnectionPing('${conn.id}')" ${isChecking ? 'disabled' : ''} title="Проверить доступность подключения" aria-label="Проверить доступность подключения"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></button>
+            <button class="btn btn-secondary btn-sm btn-icon" onclick="openQrModal('${conn.id}')" title="Показать QR-код подключения">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M7 17h.01M17 17h.01M7 7h.01M17 7h.01"/></svg>
+            </button>
+            <button class="btn btn-secondary btn-sm btn-icon" onclick="openEditConnectionModal('${conn.id}')" title="Редактировать параметры и outbound.json">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            </button>
+            <button class="btn btn-danger btn-sm btn-icon" onclick="deleteConnection('${conn.id}', '${escapeJs(conn.name)}')" title="Удалить подключение">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button><button class="btn btn-secondary btn-sm btn-icon conn-details-toggle" onclick="toggleConnectionDetails('${conn.id}')" aria-expanded="${detailsOpen}" aria-controls="connection-details-${conn.id}" title="Параметры и маршрутизация" aria-label="Параметры и маршрутизация"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button></div>
+      <div class="conn-details" id="connection-details-${conn.id}" ${detailsOpen ? '' : 'hidden'}>
           <div class="conn-badges-row">
             <span class="conn-badge badge-host" title="Хост:Порт">${escapeHtml(conn.serverAddress || '-')}:${conn.serverPort || '-'}</span>
             <span class="conn-badge badge-proto" title="Протокол">${conn.protocol === 'hysteria' ? 'HYSTERIA2' : escapeHtml((conn.protocol || 'vless').toUpperCase())}</span>
@@ -334,47 +354,11 @@ function renderConnections() {
             </select>
           </div>
 
-          <!-- PING AVAILABILITY ROW -->
-          <div class="conn-ping-row">
-            <div class="ping-status-wrap">
-              ${pingHtml}
-            </div>
-            <button class="btn-check-ping" onclick="checkConnectionPing('${conn.id}')" ${isChecking ? 'disabled' : ''} title="Проверить доступность подключения">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-              <span>Проверить</span>
-            </button>
-          </div>
 
-          <!-- COMMENT (IF ANY) -->
-          ${conn.description ? `<div class="conn-comment">${escapeHtml(conn.description)}</div>` : ''}
-          ${conn.subscriptionId ? `<div class="conn-comment">Подписка: ${escapeHtml((appData.subscriptions || []).find(s => s.id === conn.subscriptionId)?.name || '')}${conn.subscriptionMissing ? ' · Сервер исчез из подписки; сохранён для проверки' : ''}</div>` : ''}
-        </div>
-
-        <!-- FOOTER ACTIONS -->
-        <div class="conn-card-footer">
-          <div>
-            ${!isActive ? `
-              <button class="btn btn-activate" onclick="activateConnection('${conn.id}')">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                <span>Активировать</span>
-              </button>
-            ` : ''}
-          </div>
-
-          <div class="conn-footer-actions">
-            <button class="btn btn-secondary btn-sm btn-icon" onclick="openQrModal('${conn.id}')" title="Показать QR-код подключения">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M7 17h.01M17 17h.01M7 7h.01M17 7h.01"/></svg>
-            </button>
-            <button class="btn btn-secondary btn-sm btn-icon" onclick="openEditConnectionModal('${conn.id}')" title="Редактировать параметры и outbound.json">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-            </button>
-            <button class="btn btn-danger btn-sm btn-icon" onclick="deleteConnection('${conn.id}', '${escapeJs(conn.name)}')" title="Удалить подключение">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-          </div>
-        </div>
+        ${conn.description ? `<div class="conn-comment">${escapeHtml(conn.description)}</div>` : ''}
       </div>
-    `;
+      ${conn.subscriptionMissing ? '<p class="connection-missing">Сервер исчез из подписки; сохранён для проверки.</p>' : ''}
+    </article>`;
   }).join('');
 }
 
@@ -2455,10 +2439,10 @@ function getConnectionDisplay(conn) {
   const namedFlag = name.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u)?.[0];
   if (namedFlag) {
     const countryCode = [...namedFlag].map(char => String.fromCharCode(char.codePointAt(0) - 127397)).join('');
-    return { flag: namedFlag, name: name.replace(namedFlag, '').trim(),
+    return { countryCode, flag: namedFlag, name: name.replace(namedFlag, '').trim(),
       countryTitle: `Страна из названия сервера: ${countryCode}` };
   }
-  return { flag: getFlagEmoji(conn.countryCode), name,
+  return { countryCode: /^[a-z]{2}$/i.test(conn.countryCode || '') ? conn.countryCode.toUpperCase() : '', flag: getFlagEmoji(conn.countryCode), name,
     countryTitle: conn.countryName ? `${conn.countryName} (${conn.countryCode})` : (conn.countryCode || '') };
 }
 

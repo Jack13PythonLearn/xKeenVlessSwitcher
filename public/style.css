@@ -3490,3 +3490,56 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="url"]:focus, i
 .subscription-progress { height: 7px; border-radius: 8px; background: rgba(255,255,255,.1); overflow: hidden; margin-top: 8px; }
 .subscription-progress span { display: block; height: 100%; background: var(--accent-green); border-radius: inherit; }
 .subscription-description { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); font-size: 14px; line-height: 1.65; margin: 18px 0 0; }
+
+/* Compact connections: LTE first, advanced settings on demand. */
+#connections-grid { display: block; border: 1px solid var(--card-border); border-radius: 16px; overflow: hidden; background: var(--card-bg); }
+#connections-grid:empty { border: 0; }
+.connection-group-heading { margin: 0; padding: 12px 18px; font-size: 12px; font-weight: 600; letter-spacing: .05em; color: var(--text-muted); background: rgba(0,0,0,.15); border-bottom: 1px solid var(--card-border); }
+.connection-row { display: grid; grid-template-columns: minmax(160px,1fr) 120px 142px 196px; align-items: center; gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--card-border); }
+.connection-row:last-child { border-bottom: 0; }
+.connection-row.active-conn { background: rgba(16,185,129,.09); box-shadow: inset 3px 0 var(--accent-green); }
+.connection-row .conn-title { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 9px; min-width: 0; }
+.connection-row .conn-name { overflow-wrap: anywhere; min-width: 0; }
+.country-flag { display: inline-block; width: 25px; height: 19px; flex: 0 0 25px; background-size: cover; background-position: center; border-radius: 3px; box-shadow: 0 0 0 1px rgba(128,128,128,.18); }
+.connection-lte-badge { font-size: 10px; padding: 2px 5px; border-radius: 5px; color: #bcb6ff; background: rgba(99,102,241,.16); flex-shrink: 0; }
+.connection-row .ping-badge { padding: 0; border: 0; background: transparent; font-size: 12px; white-space: normal; }
+.connection-row .btn-activate { padding: 8px 10px; min-height: 34px; font-size: 12px; box-shadow: none; }
+.connection-active-label { color: var(--accent-green); text-align: center; font-size: 12px; font-weight: 600; }
+.connection-row .conn-footer-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.connection-row .btn-icon { width: 34px; height: 34px; min-width: 34px; padding: 0; border-color: transparent; background: transparent; }
+.connection-row .btn-icon:hover { background: rgba(99,102,241,.12); }
+.connection-row .conn-details-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.conn-details { grid-column: 1/-1; border-top: 1px solid var(--card-border); padding-top: 15px; }
+.conn-details[hidden] { display: none; }
+.conn-details .conn-badges-row { margin: 0 0 12px; }
+.conn-details .conn-routing-row { margin: 0; }
+.connection-missing { grid-column: 1/-1; color: var(--text-muted); font-size: 12px; margin: 0; }
+.connection-filter-empty { padding: 24px; color: var(--text-muted); text-align: center; }
+.connection-type-select { width: auto; max-width: 100%; min-height: 38px; }
+@media(max-width:900px) {
+ .connection-row { grid-template-columns: minmax(0,1fr) auto; gap: 10px 12px; padding: 12px 14px; }
+ .connection-row .conn-title { grid-column: 1; grid-row: 1; }
+ .connection-row .ping-status-wrap { grid-column: 2; grid-row: 1; text-align: right; }
+ .connection-row .btn-activate, .connection-active-label { grid-column: 1; grid-row: 2; justify-self: start; }
+ .connection-row .conn-footer-actions { grid-column: 2; grid-row: 2; }
+ .connection-row .conn-title { flex-wrap: wrap; }
+}
+@media(max-width:440px) {
+ .connection-row { padding: 12px; }
+ .connection-row .conn-footer-actions { gap: 0; }
+ .connection-row .btn-icon { width: 30px; min-width: 30px; }
+ .connection-row .btn-activate { font-size: 11px; padding: 8px; }
+}
+@media(pointer:coarse) {
+ .connection-row .btn-icon { width: 44px; height: 44px; min-width: 44px; }
+ .connection-row .btn-activate { min-height: 44px; }
+ .connection-type-select { min-height: 44px; font-size: 16px; }
+}
+@media(pointer:coarse) and (max-width:560px) {
+ .connection-row .conn-footer-actions { grid-column: 1/-1; grid-row: 3; justify-content: flex-start; }
+}
+
+.connection-type-select { appearance: auto; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 9px 12px; color: var(--text-main); min-width: 140px; }
+
+.connection-type-select { font-family: inherit; font-size: .85rem; font-weight: 500; cursor: pointer; }
+.connection-type-select option { background: #111827; color: #f3f4f6; }
