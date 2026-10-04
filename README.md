@@ -1,6 +1,6 @@
 # 🚀 xKeenVlessSwitcher
 
-**xKeenVlessSwitcher** — веб-панель для XKeen с импортом подписок по ссылке, обновлением серверов и настройкой маршрутизации. Основана на [sergey1900/XKeenSwitcher](https://github.com/sergey1900/XKeenSwitcher). Версия 2.1.2.
+**xKeenVlessSwitcher** — веб-панель для XKeen с импортом подписок по ссылке, обновлением серверов и настройкой маршрутизации. Основана на [sergey1900/XKeenSwitcher](https://github.com/sergey1900/XKeenSwitcher). Версия 2.1.3.
 
 Быстрая установка в Entware:
 
