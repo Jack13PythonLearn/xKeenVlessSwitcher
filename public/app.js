@@ -2069,7 +2069,7 @@ async function populateAutoFailoverForm() {
   // Pool container
   const poolContainer = document.getElementById('af-pool-container');
   if (poolContainer) {
-    const savedPool = Array.isArray(af.poolConnectionIds) && af.poolConnectionIds.length > 0
+    const savedPool = Array.isArray(af.poolConnectionIds)
       ? af.poolConnectionIds
       : conns.map(c => c.id);
 
