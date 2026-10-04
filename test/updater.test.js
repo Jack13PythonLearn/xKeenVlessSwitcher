@@ -2,6 +2,15 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
 const {createUpdater,allowed}=require('../lib/updater');const {install}=require('../lib/update-worker');
 const hash=content=>crypto.createHash('sha1').update('blob '+Buffer.byteLength(content)+'\0').update(content).digest('hex');
+test('restart uses Entware shell on Keenetic and system shell otherwise',()=>{
+ const {restartService}=require('../lib/update-worker');
+ for(const entware of [true,false]) {
+  const calls=[];
+  restartService('/opt/etc/init.d/S99xkeen-switcher',{exists:p=>entware&&p==='/opt/bin/sh',exec:(...args)=>calls.push(args)});
+  assert.equal(calls[0][0],entware?'/opt/bin/sh':'/bin/sh');
+  assert.deepEqual(calls[0][1],['/opt/etc/init.d/S99xkeen-switcher','restart']);
+ }
+});
 function fixture(){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xkeen-update-test-'));fs.writeFileSync(path.join(dir,'github-token'),'synthetic-test-token');const files={'package.json':JSON.stringify({name:'xkeen-vless-switcher',version:'2.2.0',updateRepository:'owner/repo'}),'server.js':'console.log("demo")','public/index.html':'<html></html>','lib/request-origin.js':'module.exports={};'};const sha='a'.repeat(40);const requests=[];const fetchImpl=async(url,options)=>{requests.push({url,options});let value;if(url.endsWith('/git/ref/heads/main'))value={object:{sha}};else if(url.endsWith('/git/commits/'+sha))value={tree:{sha:'b'.repeat(40)}};else if(url.includes('/git/trees/'))value={tree:Object.entries(files).map(([p,c])=>({path:p,type:'blob',mode:'100644',sha:hash(c),size:Buffer.byteLength(c)}))};else {const c=Object.values(files).find(c=>url.endsWith(hash(c)));value={encoding:'base64',content:Buffer.from(c).toString('base64')};}return new Response(JSON.stringify(value));};return {dir,files,sha,requests,updater:createUpdater({root:dir,dataDir:dir,repository:'owner/repo',fetchImpl})};}
 test('private update pins source SHA, verifies blob hashes and stages only application files',async()=>{const f=fixture();try{const latest=await f.updater.latest();assert.equal(latest.version,'2.2.0');await assert.rejects(f.updater.prepare('c'.repeat(40)),/Источник обновился/);const prepared=await f.updater.prepare(f.sha);assert.equal(fs.readFileSync(path.join(prepared.stage,'server.js'),'utf8'),f.files['server.js']);assert.ok(f.requests.every(r=>r.options.redirect==='error'&&r.options.headers.Authorization==='Bearer synthetic-test-token'));assert.ok(!JSON.stringify(latest).includes('synthetic-test-token'));}finally{fs.rmSync(f.dir,{recursive:true,force:true});}});
 test('updater refuses credentials absence and traversal or private data paths',async()=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xkeen-missing-token-'));try{await assert.rejects(createUpdater({root:dir,dataDir:dir,repository:'owner/repo',fetchImpl:()=>{throw Error('must not fetch');}}).latest(),/токен/);for(const p of ['../server.js','public/../data/profiles.json','data/admin-key','.git/config','lib//a.js'])assert.equal(allowed(p),false);}finally{fs.rmSync(dir,{recursive:true,force:true});}});

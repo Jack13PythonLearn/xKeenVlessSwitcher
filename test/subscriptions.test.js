@@ -304,6 +304,10 @@ test('three-way save preserves concurrent subscription additions, settings and d
 test('HTTP API redacts URL, deletion does not exclude servers, and backup restore retains subscription ownership', async () => {
   const state = data();
   reconcile(state, 's', parse(vless() + '\n' + hy));
+  for (const key of ['outboundPath', 'routingPath']) {
+    state.settings[key] = path.join(dir, key + '.json');
+    fs.writeFileSync(state.settings[key], '{}');
+  }
   state.settings.restartCommand = '';
   saveData(state);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
