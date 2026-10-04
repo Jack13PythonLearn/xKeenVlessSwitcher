@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=2.1.10">
-  <link rel="stylesheet" href="/flags.css?v=2.1.10">
+  <link rel="stylesheet" href="style.css?v=2.1.11">
+  <link rel="stylesheet" href="/flags.css?v=2.1.11">
 </head>
 <body>
   <div class="app-background"></div>
@@ -58,7 +58,7 @@
         <div>
           <div class="brand-title-row">
             <h1>xKeenVlessSwitcher</h1>
-            <span class="version-tag" id="header-version">v2.1.10</span>
+            <span class="version-tag" id="header-version">v2.1.11</span>
           </div>
           <p class="subtitle">Управление подключениями XKeen на роутерах Keenetic</p>
         </div>
@@ -282,6 +282,7 @@
               </div>
             </div>
             <p class="help-text" style="margin-bottom:8px;">Отметьте подключения, на которые разрешено переключаться. Снимите галочки со специальных БС-профилей или лимитных серверов.</p>
+            <div class="pool-filter-bar"><select id="af-pool-type-filter" class="connection-type-select" aria-label="Тип резервных серверов" onchange="applyAutoPoolFilter()"><option value="all">Все</option><option value="lte">LTE-серверы</option><option value="regular">Обычные серверы</option></select><span class="help-text">Выбрать / снять все — для показанных серверов</span></div>
             <div class="pool-connections-list" id="af-pool-container">
               <!-- Populated via JS -->
             </div>
@@ -358,7 +359,7 @@
     <footer class="bottom-bar glass-card footer-centered">
       <div class="footer-content">
         <div class="app-version-badge" id="app-version-badge" title="Версия приложения">
-          <span id="app-version-text">v2.1.10</span>
+          <span id="app-version-text">v2.1.11</span>
         </div>
         <div id="app-update-group" class="app-update-group hidden">
           <a id="app-update-badge" class="app-update-badge" href="https://github.com/Jack13PythonLearn/xKeenVlessSwitcher/releases" target="_blank" rel="noopener noreferrer" title="Нажмите, чтобы открыть страницу релиза на GitHub">
@@ -1100,7 +1101,7 @@
   <div id="toast-container"></div>
 
   <script src="qrcode.min.js"></script>
-  <script src="app.js?v=2.1.10"></script>
-  <script src="subscriptions.js?v=2.1.10"></script>
+  <script src="app.js?v=2.1.11"></script>
+  <script src="subscriptions.js?v=2.1.11"></script>
 </body>
 </html>

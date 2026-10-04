@@ -2082,7 +2082,7 @@ async function populateAutoFailoverForm() {
       const pingClass = c.lastPing ? 'ok' : '';
 
       return `
-        <div class="pool-conn-item" onclick="togglePoolConnItem('${c.id}')">
+        <div class="pool-conn-item" data-server-type="${isLteConnection(c)?'lte':'regular'}" onclick="togglePoolConnItem('${c.id}')">
           <div class="pool-conn-left">
             <input type="checkbox" class="pool-conn-checkbox" id="af-pool-conn-${c.id}" value="${c.id}" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation()">
             <label class="pool-conn-name" for="af-pool-conn-${c.id}" onclick="event.stopPropagation()">
@@ -2098,6 +2098,8 @@ async function populateAutoFailoverForm() {
       `;
     }).join('');
   }
+
+  applyAutoPoolFilter();
 
   // Auto Return
   const autoReturnToggle = document.getElementById('af-auto-return');
@@ -2129,8 +2131,15 @@ function togglePoolConnItem(connId) {
   }
 }
 
+function applyAutoPoolFilter() {
+  const type = document.getElementById('af-pool-type-filter')?.value || 'all';
+  document.querySelectorAll('#af-pool-container .pool-conn-item').forEach(row => {
+    row.hidden = type !== 'all' && row.dataset.serverType !== type;
+  });
+}
+
 function toggleAllPool(select) {
-  const checkboxes = document.querySelectorAll('#af-pool-container .pool-conn-checkbox');
+  const checkboxes = document.querySelectorAll('#af-pool-container .pool-conn-item:not([hidden]) .pool-conn-checkbox');
   checkboxes.forEach(cb => { cb.checked = select; });
 }
 
