@@ -1285,7 +1285,7 @@ function loadDataRaw() {
       }
 
       // Ensure system routing 2 "Всё через VPN кроме РФ" exists and is properly locked
-      const sysExceptRuIdx = data.routings.findIndex(r => r.id === 'routing_except_ru' || r.name === 'Всё через VPN кроме РФ' || r.name === 'Все кроме РФ через VPN');
+      const sysExceptRuIdx = data.routings.findIndex(r => r.id === 'routing_except_ru' || (!r.replacesSystemRouting && (r.name === 'Всё через VPN кроме РФ' || r.name === 'Все кроме РФ через VPN')));
       let sysExceptRu;
       if (sysExceptRuIdx === -1) {
         sysExceptRu = { ...SYSTEM_ROUTING_EXCEPT_RU };
@@ -3097,7 +3097,7 @@ const server = http.createServer(async (req, res) => {
           id: r.id || ('routing_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4)),
           name: r.name || 'Маршрутизация',
           description: r.description || '',
-          isSystem: Boolean(r.isSystem || r.id === 'routing_all_vpn' || r.id === 'routing_except_ru' || r.name === 'Всё через VPN' || r.name === 'Всё через VPN кроме РФ' || r.name === 'Все кроме РФ через VPN'),
+          isSystem: Boolean(r.isSystem || r.id === 'routing_all_vpn' || r.id === 'routing_except_ru' || (!r.replacesSystemRouting && (r.name === 'Всё через VPN' || r.name === 'Всё через VPN кроме РФ' || r.name === 'Все кроме РФ через VPN'))),
           content: r.content || '',
           replacesSystemRouting: r.replacesSystemRouting === 'routing_except_ru' ? r.replacesSystemRouting : undefined,
           createdAt: r.createdAt || new Date().toISOString()
