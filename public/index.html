@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=2.2.1">
-  <link rel="stylesheet" href="/flags.css?v=2.2.1">
+  <link rel="stylesheet" href="style.css?v=2.2.2">
+  <link rel="stylesheet" href="/flags.css?v=2.2.2">
 </head>
 <body>
   <div class="app-background"></div>
@@ -58,7 +58,7 @@
         <div>
           <div class="brand-title-row">
             <h1>xKeenVlessSwitcher</h1>
-            <span class="version-tag" id="header-version">v2.2.1</span>
+            <span class="version-tag" id="header-version">v2.2.2</span>
           </div>
           <p class="subtitle">Управление подключениями XKeen на роутерах Keenetic</p>
         </div>
@@ -358,9 +358,9 @@
     <!-- FOOTER -->
     <footer class="bottom-bar glass-card footer-centered">
       <div class="footer-content">
-        <div class="app-version-badge" id="app-version-badge" title="Версия приложения">
-          <span id="app-version-text">v2.2.1</span>
-        </div>
+        <button type="button" class="app-version-badge" id="app-version-badge" title="Проверить обновления на GitHub" aria-label="Проверить обновления на GitHub" onclick="checkAppUpdate()">
+          <span id="app-version-text">v2.2.2</span>
+        </button>
         <div id="app-update-group" class="app-update-group hidden">
           <a id="app-update-badge" class="app-update-badge" href="https://github.com/Jack13PythonLearn/xKeenVlessSwitcher/releases" target="_blank" rel="noopener noreferrer" title="Нажмите, чтобы открыть страницу релиза на GitHub">
             <span class="update-pulse-dot"></span>
@@ -1031,7 +1031,7 @@
           <div class="update-alert-icon">🛡️</div>
           <div class="update-alert-content">
             <strong>Безопасное обновление</strong>
-            <p>Ваши профили, роутинги и настройки (<code>data/profiles.json</code>) будут автоматически сохранены в резервную копию перед установкой новой версии.</p>
+            <p>Настройки и подписки сохраняются. Если новая версия не запустится, панель попытается восстановить предыдущую.</p>
           </div>
         </div>
 
@@ -1046,8 +1046,8 @@
           <div class="progress-step" id="up-step-backup">
             <div class="step-icon">1</div>
             <div class="step-info">
-              <div class="step-title">Резервное копирование данных</div>
-              <div class="step-desc">Сохранение profiles.json и настроек</div>
+              <div class="step-title">Подготовка отката</div>
+              <div class="step-desc">Сохранение предыдущей версии приложения</div>
             </div>
             <div class="step-status" id="up-step-backup-status">⏳</div>
           </div>
@@ -1056,7 +1056,7 @@
             <div class="step-icon">2</div>
             <div class="step-info">
               <div class="step-title">Загрузка релиза с GitHub</div>
-              <div class="step-desc" id="up-step-download-desc">Скачивание архива с исходным кодом</div>
+              <div class="step-desc" id="up-step-download-desc">Загрузка и проверка файлов приложения</div>
             </div>
             <div class="step-status" id="up-step-download-status">⏳</div>
           </div>
@@ -1065,7 +1065,7 @@
             <div class="step-icon">3</div>
             <div class="step-info">
               <div class="step-title">Установка файлов приложения</div>
-              <div class="step-desc">Распаковка и замена файлов</div>
+              <div class="step-desc">Установка проверенной версии</div>
             </div>
             <div class="step-status" id="up-step-extract-status">⏳</div>
           </div>
@@ -1091,7 +1091,7 @@
         <button type="button" class="btn btn-secondary" id="btn-cancel-update" onclick="closeAppUpdateModal()">Отмена</button>
         <button type="button" class="btn btn-primary btn-update-confirm" id="btn-confirm-update" onclick="startAppUpdate()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-          Начать обновление
+          Установить
         </button>
       </div>
     </div>
@@ -1101,7 +1101,7 @@
   <div id="toast-container"></div>
 
   <script src="qrcode.min.js"></script>
-  <script src="app.js?v=2.2.1"></script>
-  <script src="subscriptions.js?v=2.2.1"></script>
+  <script src="app.js?v=2.2.2"></script>
+  <script src="subscriptions.js?v=2.2.2"></script>
 </body>
 </html>

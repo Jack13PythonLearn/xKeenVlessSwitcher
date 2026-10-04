@@ -3597,3 +3597,7 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="url"]:focus, i
 .pool-filter-bar .help-text { margin:0; }
 .pool-conn-item[hidden] { display:none; }
 
+.app-version-badge { font-family: inherit; cursor: pointer; }
+.app-version-badge:focus-visible { outline: 2px solid #818cf8; outline-offset: 3px; }
+.app-version-badge:disabled { cursor: wait; opacity: .7; }
+.update-release-body { max-height: 240px; overflow-y: auto; }

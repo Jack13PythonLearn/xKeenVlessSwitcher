@@ -2491,50 +2491,58 @@ let currentAppVersion = '2.0.2';
 let isUpdateInProgress = false;
 let updatePollTimer = null;
 
-async function checkForUpdates(currentVersion) {
-  if (updateCheckRan) return;
-  if (!appData.updateRepository) return;
-  updateCheckRan = true;
+let updateCheckPromise = null;
+
+async function checkForUpdates(currentVersion, manual = false) {
+  if (isUpdateInProgress) {if (manual) showToast('Обновление уже выполняется', 'info');return;}
+  if (!manual && updateCheckRan) return;
   if (currentVersion) currentAppVersion = String(currentVersion).trim();
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch('/api/app/latest', {
-      headers: { 'Accept': 'application/vnd.github.v3+json' },
-      signal: controller.signal
+  if (!appData.updateRepository) {if (manual) showToast('Репозиторий обновлений не настроен', 'warning');return;}
+  updateCheckRan = true;
+  if (!updateCheckPromise) {
+    const button = document.getElementById('app-version-badge');
+    const label = document.getElementById('app-version-text');
+    if (button) {button.disabled = true;button.setAttribute('aria-busy', 'true');}
+    if (label) label.textContent = 'Проверка…';
+    updateCheckPromise = (async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 90000);
+      try {
+        const response = await fetch('/api/app/latest', {cache:'no-store',signal:controller.signal});
+        const release = await response.json();
+        if (!response.ok) throw Error(release.error || 'Не удалось проверить обновления');
+        if (!/^v?\d+\.\d+\.\d+$/.test(release.tag_name || '') || !/^[a-f0-9]{40}$/.test(release.sha || '')) throw Error('GitHub вернул некорректную версию обновления');
+        return release;
+      } finally {clearTimeout(timeoutId);}
+    })().finally(() => {
+      updateCheckPromise = null;
+      if (button) {button.disabled = false;button.removeAttribute('aria-busy');}
+      if (label) label.textContent = currentAppVersion.startsWith('v') ? currentAppVersion : 'v' + currentAppVersion;
     });
-    clearTimeout(timeoutId);
-    if (!res.ok) {const problem=await res.json();showToast(problem.error || 'Не удалось проверить обновления', 'warning');return;}
-
-    const release = await res.json();
-    if (!release || !release.tag_name) return;
-
-    const latestTag = release.tag_name;
-    const curVer = currentAppVersion || '2.0.0';
-
-    if (isNewerVersion(latestTag, curVer)) {
-      latestReleaseInfo = release;
-      const group = document.getElementById('app-update-group');
-      const badge = document.getElementById('app-update-badge');
+  }
+  try {
+    const release = await updateCheckPromise;
+    const newer = isNewerVersion(release.tag_name, currentAppVersion);
+    latestReleaseInfo = newer ? release : null;
+    const group = document.getElementById('app-update-group');
+    if (group) group.classList.toggle('hidden', !newer);
+    if (newer) {
       const text = document.getElementById('app-update-text');
-
-      const displayVer = latestTag.startsWith('v') ? latestTag : `v${latestTag}`;
-      if (text) text.textContent = `Доступна ${displayVer}`;
-      if (badge && release.html_url) {
-        badge.href = release.html_url;
-      }
-
-      if (group) {
-        group.classList.remove('hidden');
-      } else if (badge) {
-        badge.classList.remove('hidden');
-      }
+      const badge = document.getElementById('app-update-badge');
+      if (text) text.textContent = 'Доступна ' + (release.tag_name.startsWith('v') ? release.tag_name : 'v' + release.tag_name);
+      if (badge && release.html_url) badge.href = release.html_url;
+      if (manual) openAppUpdateModal();
+    } else if (manual) {
+      showToast(isNewerVersion(currentAppVersion, release.tag_name) ? 'Ваша версия новее версии на GitHub' : 'Установлена последняя версия', 'success');
     }
-  } catch (e) {
-    console.debug('Update check skipped or timed out:', e.message);
+  } catch (error) {
+    latestReleaseInfo = null;
+    document.getElementById('app-update-group')?.classList.add('hidden');
+    if (manual) showToast(error.name === 'AbortError' ? 'Проверка заняла слишком много времени. Попробуйте ещё раз.' : error.message, 'warning');
   }
 }
+
+function checkAppUpdate() {return checkForUpdates(appData.version, true);}
 
 function openAppUpdateModal() {
   if (!latestReleaseInfo) {
@@ -2557,8 +2565,8 @@ function openAppUpdateModal() {
   if (notesContainer && notesBody) {
     if (latestReleaseInfo.body && latestReleaseInfo.body.trim()) {
       let text = latestReleaseInfo.body.trim();
-      if (text.length > 500) {
-        text = text.substring(0, 500) + '...';
+      if (text.length > 12000) {
+        text = text.substring(0, 12000) + '...';
       }
       notesBody.textContent = text;
       notesContainer.classList.remove('hidden');
@@ -2578,7 +2586,7 @@ function openAppUpdateModal() {
       <button type="button" class="btn btn-secondary" id="btn-cancel-update" onclick="closeAppUpdateModal()">Отмена</button>
       <button type="button" class="btn btn-primary btn-update-confirm" id="btn-confirm-update" onclick="startAppUpdate()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-        Начать обновление
+        Установить
       </button>
     `;
   }
@@ -2596,9 +2604,9 @@ function closeAppUpdateModal() {
 
 function resetUpdateSteps() {
   const steps = [
-    { id: 'up-step-backup', icon: '1', desc: 'Сохранение profiles.json и настроек' },
-    { id: 'up-step-download', icon: '2', desc: 'Скачивание архива с исходным кодом' },
-    { id: 'up-step-extract', icon: '3', desc: 'Распаковка и замена файлов' },
+    { id: 'up-step-backup', icon: '1', desc: 'Сохранение предыдущей версии приложения' },
+    { id: 'up-step-download', icon: '2', desc: 'Загрузка и проверка файлов приложения' },
+    { id: 'up-step-extract', icon: '3', desc: 'Установка проверенной версии' },
     { id: 'up-step-restart', icon: '4', desc: 'Ожидание запуска новой версии службы...' }
   ];
 
