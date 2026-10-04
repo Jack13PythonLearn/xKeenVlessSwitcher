@@ -5,24 +5,24 @@ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'xkeen-secure-'));
 process.env.XKEEN_DATA_DIR=temp;
 process.env.XKEEN_DISABLE_BACKGROUND='1';
 const app=require('../server');
-let base,key;
-before(async()=>{await new Promise(r=>app.server.listen(0,'127.0.0.1',r));base='http://127.0.0.1:'+app.server.address().port;key=fs.readFileSync(path.join(temp,'admin-key'),'utf8').trim();const d=app.loadData();d.settings.restartCommand='';app.saveData(d);});
+let base;
+before(async()=>{await new Promise(r=>app.server.listen(0,'127.0.0.1',r));base='http://127.0.0.1:'+app.server.address().port;const d=app.loadData();d.settings.restartCommand='';app.saveData(d);});
 after(async()=>{app.server.closeAllConnections();await new Promise(r=>app.server.close(r));fs.rmSync(temp,{recursive:true,force:true});});
-const call=(p,body,headers={})=>fetch(base+p,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json',...headers},body:body===undefined?undefined:JSON.stringify(body)});
-test('API requires authentication and rejects foreign origin even with an admin credential',async()=>{
-  assert.equal((await fetch(base+'/api/data')).status,401);
+const call=(p,body,headers={})=>fetch(base+p,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...headers},body:body===undefined?undefined:JSON.stringify(body)});
+test('API opens without credentials and rejects foreign Origin and Host',async()=>{
+  assert.equal((await fetch(base+'/api/data')).status,200);
   assert.equal((await call('/api/settings',{statusCommand:'echo forbidden'},{Origin:'https://untrusted.example'})).status,403);
   assert.equal((await call('/api/data')).status,200);
-  const status=await new Promise((resolve,reject)=>{const req=require('node:http').get(base+'/api/data',{headers:{Host:'rebind.example',Authorization:'Bearer '+key}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);});
+  const status=await new Promise((resolve,reject)=>{const req=require('node:http').get(base+'/api/data',{headers:{Host:'rebind.example'}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);});
   assert.equal(status,403);
 });
-test('login issues HttpOnly SameSite session; key is absent from data and backup',async()=>{
-  assert.equal((await call('/api/auth/login',{key:'wrong'})).status,403);
-  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
-  const cookie=login.headers.get('set-cookie');assert.match(cookie,/HttpOnly/);assert.match(cookie,/SameSite=Strict/);
-  assert.equal((await fetch(base+'/api/data',{headers:{Cookie:cookie.split(';')[0]}})).status,200);
-  const data=await(await call('/api/data')).text();assert.ok(!data.includes(key));
-  const backup=Buffer.from(await(await call('/api/backup/export')).arrayBuffer());assert.ok(!backup.includes(Buffer.from(key)));
+test('panel needs no key or session and settings can be saved directly',async()=>{
+  assert.equal(fs.existsSync(path.join(temp,'admin-key')),false);
+  const before=app.loadData().settings.statusCommand;
+  const response=await call('/api/settings',{statusCommand:before});
+  assert.equal(response.status,200);assert.equal(response.headers.get('set-cookie'),null);
+  const html=await(await fetch(base+'/')).text();assert.ok(!/access-logout|access\.js|access-dialog/.test(html));
+  assert.equal((await call('/api/backup/export')).status,200);
 });
 test('empty pool remains empty when disabled and cannot be enabled through either API',async()=>{
   let d=app.loadData();d.settings.autoFailover.poolConnectionIds=[];app.saveData(d);
@@ -52,7 +52,7 @@ test('backup IDs cannot inject HTML or inline scripts or duplicate another conne
 });
 test('oversized HTTP body is rejected before settings are changed',async()=>{
   const original=fs.readFileSync(path.join(temp,'profiles.json'),'utf8');
-  const status=await new Promise((resolve,reject)=>{const req=require('node:http').request(base+'/api/settings',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Length':17*1024*1024}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);req.end();});
+  const status=await new Promise((resolve,reject)=>{const req=require('node:http').request(base+'/api/settings',{method:'POST',headers:{'Content-Length':17*1024*1024}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);req.end();});
   assert.equal(status,413);assert.equal(fs.readFileSync(path.join(temp,'profiles.json'),'utf8'),original);
 });
 test('saving valid settings keeps an independent last-good database',async()=>{const previous=fs.readFileSync(path.join(temp,'profiles.json'),'utf8');const d=app.loadData();d.settings.statusCommand='test-last-good';app.saveData(d);assert.equal(fs.readFileSync(path.join(temp,'profiles.json.last-good'),'utf8'),previous);});
@@ -66,4 +66,3 @@ test('ZIP expansion and entry count limits reject bombs without changing the dat
  central.writeUInt32LE(1,24);assert.throws(()=>app.parseZipBuffer(Buffer.concat([local,name,compressed,central,name,end])),/лимит/);
  end.writeUInt16LE(6001,10);assert.throws(()=>app.parseZipBuffer(Buffer.concat([local,name,compressed,central,name,end])),/много файлов/);
 });
-test('logout revokes session immediately',async()=>{const login=await call('/api/auth/login',{key});const cookie=login.headers.get('set-cookie').split(';')[0];const response=await fetch(base+'/api/auth/logout',{method:'POST',headers:{Cookie:cookie}});assert.equal(response.status,200);assert.equal((await fetch(base+'/api/data',{headers:{Cookie:cookie}})).status,401);});

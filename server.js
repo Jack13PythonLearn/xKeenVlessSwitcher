@@ -25,7 +25,7 @@ const AUTOFAILOVER_LOG_FILE = path.join(DATA_DIR, 'autofailover_history.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 let isUpdatingApp = false;
-const access = require('./lib/access').createAccess({dir:DATA_DIR,allowedHosts:(process.env.XKEEN_ALLOWED_HOSTS||'').split(',').filter(Boolean)});
+const {trustedOrigin} = require('./lib/request-origin');
 
 // Ensure data directory exists
 if (!fs.existsSync(path.dirname(DATA_FILE))) {
@@ -1815,14 +1815,9 @@ async function handleRequest(req, res) {
     if(isUpdatingApp && ['POST','PUT','DELETE'].includes(req.method)) return sendJson(res,409,{error:'Обновление приложения выполняется. Изменения временно заблокированы.'});
     res.setHeader('Cache-Control','no-store');
     if(Number(req.headers['content-length'])>16*1024*1024) return sendJson(res,413,{error:'Размер запроса превышает лимит 16 МиБ.'});
-    if (!access.trustedOrigin(req)) return sendJson(res,403,{error:'Недопустимый источник запроса.'});
+    if (!trustedOrigin(req)) return sendJson(res,403,{error:'Недопустимый источник запроса.'});
     if (req.method==='OPTIONS') {res.writeHead(204);return res.end();}
-    if (urlParts==='/api/auth/login' && req.method==='POST') {
-      try {const body=await parseJsonBody(req);res.setHeader('Set-Cookie',access.login(req,body.key));return sendJson(res,200,{ok:true});}
-      catch {return sendJson(res,403,{error:'Вход не выполнен. Проверьте ключ или повторите через минуту.'});}
-    }
-    if (!access.authorized(req)) return sendJson(res,401,{error:'Требуется вход в панель.'});
-    if(urlParts==='/api/auth/logout' && req.method==='POST') {res.setHeader('Set-Cookie',access.logout(req));return sendJson(res,200,{ok:true});}
+
   }
   if (['POST','PUT','DELETE'].includes(req.method) && (/^\/api\/(settings|autofailover\/(settings|toggle)|failover\/(settings|toggle)|backup\/restore|connections|subscriptions|service|routings|routing-sync)/.test(urlParts) || /\/(activate|set-routing)$/.test(urlParts))) automationGeneration++;
   // --- API ROUTES ---
@@ -3075,7 +3070,6 @@ server.headersTimeout=10000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 if (require.main === module) server.listen(PORT, HOST, () => {
-  console.log('Ключ доступа к панели находится в ' + access.keyPath);
   console.log(`===================================================`);
   console.log(`🚀 xKeenVlessSwitcher ${appVersion} запущен на http://${HOST}:${PORT}`);
   console.log(`===================================================`);
