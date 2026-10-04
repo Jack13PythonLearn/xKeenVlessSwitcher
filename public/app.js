@@ -323,7 +323,7 @@ function renderConnections() {
     const display = getConnectionDisplay(conn);
     const flagHtml = display.countryCode && /^[A-Z]{2}$/.test(display.countryCode) ? '<span class="country-flag country-flag-' + display.countryCode.toLowerCase() + '" role="img" aria-label="' + escapeHtml(display.countryTitle) + '"></span>' : '';
     const lte = isLteConnection(conn);
-    const heading = index === 0 || lte !== isLteConnection(list[index - 1]) ? '<h3 class="connection-group-heading">' + (lte ? 'LTE-серверы' : 'Обычные серверы') + '</h3>' : '';
+    const heading = index === 0 || lte !== isLteConnection(list[index - 1]) ? '<div class="connection-group-heading"><h3>' + (lte ? 'LTE-серверы' : 'Обычные серверы') + '</h3><span class="connection-ping-heading">Пинг</span></div>' : '';
     const detailsOpen = expandedConnections.has(conn.id);
     return `${heading}<article class="connection-row ${isActive ? 'active-conn' : ''}" id="card-conn-${conn.id}">
       <h3 class="conn-title">${flagHtml}<span class="conn-name" title="${escapeHtml(display.name)}">${escapeHtml(display.name)}</span>${lte && !/(?:^|[^a-zа-я])(?:lte|лте)(?=$|[^a-zа-я])/iu.test(display.name) ? '<span class="connection-lte-badge">LTE</span>' : ''}</h3>
@@ -2400,19 +2400,80 @@ function stripComments(str) {
 // ==============================================================================
 // MODAL HELPERS
 // ==============================================================================
+const modalStack = [];
+const modalOpeners = new Map();
+
+function modalFocusable(el) {
+  return [...el.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
+    .filter(node => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length && !node.closest('[inert]'));
+}
+
+function topModal() {
+  return document.getElementById(modalStack[modalStack.length - 1]);
+}
+
 function openModal(id) {
   const el = document.getElementById(id);
-  if (el) el.classList.remove('hidden');
+  if (!el || modalStack.includes(id)) return;
+  modalOpeners.set(id, document.activeElement);
+  modalStack.push(id);
+  el.classList.remove('hidden');
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.tabIndex = -1;
+  const heading = el.querySelector('h2, h3');
+  if (heading) {
+    if (!heading.id) heading.id = id + '-heading';
+    el.setAttribute('aria-labelledby', heading.id);
+  }
+  (modalFocusable(el)[0] || el).focus({ preventScroll: true });
 }
 
 function closeModal(id) {
   const el = document.getElementById(id);
-  if (el) el.classList.add('hidden');
+  if (!el) return;
+  const wasTop = topModal() === el;
+  el.classList.add('hidden');
+  const index = modalStack.indexOf(id);
+  if (index !== -1) modalStack.splice(index, 1);
+  const opener = modalOpeners.get(id);
+  modalOpeners.delete(id);
+  if (wasTop) {
+    const remaining = topModal();
+    if (opener?.isConnected && (!remaining || remaining.contains(opener))) opener.focus({ preventScroll: true });
+    else if (remaining) (modalFocusable(remaining)[0] || remaining).focus({ preventScroll: true });
+  }
 }
 
+document.addEventListener('keydown', e => {
+  const el = topModal();
+  if (!el) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    closeModal(el.id);
+  } else if (e.key === 'Tab') {
+    const items = modalFocusable(el);
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (!first || !el.contains(document.activeElement) ||
+        (e.shiftKey && document.activeElement === first) ||
+        (!e.shiftKey && document.activeElement === last)) {
+      e.preventDefault();
+      e.stopPropagation();
+      (e.shiftKey ? last || el : first || el).focus();
+    }
+  }
+}, true);
+
+document.addEventListener('focusin', e => {
+  const el = topModal();
+  if (el && !el.contains(e.target)) (modalFocusable(el)[0] || el).focus({ preventScroll: true });
+});
+
 window.addEventListener('click', (e) => {
-  if (e.target.classList.contains('modal-overlay')) {
-    e.target.classList.add('hidden');
+  if (e.target.classList.contains('modal-overlay') && topModal() === e.target) {
+    closeModal(e.target.id);
   }
 });
 
