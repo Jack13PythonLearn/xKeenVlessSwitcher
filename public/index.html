@@ -275,14 +275,14 @@
           <div class="form-group">
             <div class="label-row pool-header-label-row">
               <label style="margin:0;">Пул резервных подключений <span class="req">*</span></label>
-              <div class="field-actions" style="display:flex; gap:8px;">
+
+            </div>
+            <p class="help-text" style="margin-bottom:8px;">Отметьте подключения, на которые разрешено переключаться. Снимите галочки со специальных БС-профилей или лимитных серверов.</p>
+            <div class="pool-filter-bar"><select id="af-pool-type-filter" class="connection-type-select" aria-label="Тип резервных серверов" onchange="applyAutoPoolFilter()"><option value="all">Все</option><option value="lte">LTE-серверы</option><option value="regular">Обычные серверы</option></select><div class="field-actions" style="display:flex; align-items:center; gap:8px; margin-left:auto;">
                 <button type="button" class="btn-text-action" onclick="toggleAllPool(true)">Выбрать все</button>
                 <span style="opacity:0.3;">|</span>
                 <button type="button" class="btn-text-action" onclick="toggleAllPool(false)">Снять все</button>
-              </div>
-            </div>
-            <p class="help-text" style="margin-bottom:8px;">Отметьте подключения, на которые разрешено переключаться. Снимите галочки со специальных БС-профилей или лимитных серверов.</p>
-            <div class="pool-filter-bar"><select id="af-pool-type-filter" class="connection-type-select" aria-label="Тип резервных серверов" onchange="applyAutoPoolFilter()"><option value="all">Все</option><option value="lte">LTE-серверы</option><option value="regular">Обычные серверы</option></select><span class="help-text">Выбрать / снять все — для показанных серверов</span></div>
+              </div></div>
             <div class="pool-connections-list" id="af-pool-container">
               <!-- Populated via JS -->
             </div>
