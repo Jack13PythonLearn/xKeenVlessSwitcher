@@ -1,6 +1,6 @@
 {
   "name": "xkeen-vless-switcher",
-  "version": "2.1.7",
+  "version": "2.1.8",
   "updateRepository": "Jack13PythonLearn/xKeenVlessSwitcher",
   "description": "Simple Web UI for switching XKeen outbound and routing configurations",
   "main": "server.js",

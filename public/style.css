@@ -3574,3 +3574,15 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="url"]:focus, i
 .routing-details-footer { display:flex; align-items:center; flex-wrap:wrap; gap:16px; }
 @media(max-width:720px) { .routing-list-row { grid-template-columns:minmax(0,1fr) auto; padding:16px; gap:12px; } .routing-profile-name { grid-column:1/-1; } .routing-list-actions { justify-self:end; } .routing-rules-list>li { grid-template-columns:1fr; gap:8px; } .routing-toolbar-actions { flex-wrap:wrap; } }
 @media(pointer:coarse) { .routing-list-actions .btn-icon { width:44px; height:44px; } }
+
+.routing-sync-panel { padding:16px; border:1px solid var(--card-border); border-radius:12px; margin-bottom:22px; background:rgba(99,102,241,.04); font-size:12px; color:var(--text-muted); }
+.routing-sync-panel p { margin:8px 0 0; line-height:1.5; }
+.routing-sync-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+.routing-sync-heading strong { color:var(--text-main); font-size:14px; }
+.routing-sync-sources { display:flex; gap:16px 32px; flex-wrap:wrap; margin:16px 0; }
+.routing-sync-sources>div { display:flex; flex-direction:column; gap:5px; }
+.routing-sync-panel a { color:#a5b4fc; text-decoration:none; }
+.routing-sync-panel a:hover { text-decoration:underline; }
+.routing-source-files summary { cursor:pointer; margin-bottom:8px; }
+.routing-sync-result { color:#34d399; }
+.routing-sync-error { color:#fca5a5; }

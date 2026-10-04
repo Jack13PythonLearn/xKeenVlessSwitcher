@@ -403,6 +403,21 @@ async function importRoutingFile(input) {
  const file=input.files?.[0];if(!file)return;
  try {if(file.size>1024*1024)throw Error('Файл больше 1 МБ.');const content=await file.text();const parsed=JSON.parse(stripComments(content));if(!Array.isArray((parsed.routing||parsed).rules))throw Error('В файле нет списка правил маршрутизации.');openAddRoutingModal();document.getElementById('routing-name').value=file.name.replace(/\.json$/i,'');setEditorContent('routing-content-json',JSON.stringify(parsed.routing?parsed:{routing:parsed},null,2));}catch(e){showToast(e.message,'error');}finally{input.value='';}
 }
+let routingSyncBusy = false;
+function routingSyncHtml(profile) {
+ if (profile.replacesSystemRouting !== 'routing_except_ru' || profile.isSystem) return '';
+ const state=profile.domainSync||{};
+ const date=value=>value?new Date(value).toLocaleString('ru-RU'):'Ещё не проверялись';
+ const sources=appData.routingSources||[];
+ return '<section class="routing-sync-panel"><div class="routing-sync-heading"><div><strong>Обновление доменов</strong><p>'+ (state.enabled?'Автоматически раз в неделю':'Включится после первой проверки')+'</p></div><button class="btn btn-secondary btn-sm" onclick="refreshRoutingSources()" '+(routingSyncBusy?'disabled':'')+'>'+(routingSyncBusy?'Проверка…':'Проверить обновления')+'</button></div><div class="routing-sync-sources">'+sources.map(source=>'<div><a href="'+escapeHtml(source.url)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(source.name)+'</a><span>Версия: '+escapeHtml((state.sources?.[source.id]?.version||'').slice(0,12)||'—')+'</span></div>').join('')+'</div><details class="routing-source-files"><summary>Списки v2fly · '+(appData.routingSourceLists||[]).length+'</summary><div class="routing-rule-tags">'+(appData.routingSourceLists||[]).map(name=>'<a target="_blank" rel="noopener noreferrer" href="https://github.com/v2fly/domain-list-community/blob/master/data/'+encodeURIComponent(name)+'">'+escapeHtml(name)+'</a>').join('')+'</div></details><p>Проверено: '+escapeHtml(date(state.lastCheckedAt))+'</p>'+(state.lastUpdatedAt?'<p>Список сохранён: '+escapeHtml(date(state.lastUpdatedAt))+' · Отдельных исключений: '+Number(state.manualCount||0)+'</p>':'')+'<p class="'+(state.error?'routing-sync-error':'routing-sync-result')+'" role="status">'+escapeHtml(state.error||state.message||'Проверяются версии выбранных файлов. При ошибке текущий список сохраняется.')+'</p></section>';
+}
+async function refreshRoutingSources() {
+ if(routingSyncBusy)return;routingSyncBusy=true;renderRoutings();
+ try {const res=await fetch('/api/routing-sync/refresh',{method:'POST'});const data=await res.json();if(!res.ok)throw Error(data.error||'Ошибка обновления');showToast(data.message,data.warning?'warning':data.changed?'success':'info');}
+ catch(e){showToast(e.message,'error');}
+ finally{routingSyncBusy=false;await loadData();}
+}
+
 function renderRoutings() {
  if(!routingsGrid)return;
  const raw=appData.routings||[];const list=[...raw.filter(r=>!r.isSystem),...raw.filter(r=>r.isSystem)];
@@ -418,7 +433,7 @@ function renderRoutings() {
  <button class="btn btn-secondary btn-icon" onclick="copyRouting('${arg}')" title="Создать копию" aria-label="Создать копию">${routingIcon('copy')}</button>
  ${!r.isSystem && r.replacesSystemRouting!=='routing_except_ru'?`<button class="btn btn-danger btn-icon" onclick="deleteRouting('${arg}', '${escapeJs(r.name)}')" title="Удалить профиль" aria-label="Удалить профиль">${routingIcon('trash')}</button>`:''}
  <button class="btn btn-secondary btn-icon routing-expand" onclick="toggleRoutingDetails('${arg}')" aria-expanded="${open}" aria-controls="routing-details-${id}" title="Показать правила" aria-label="Показать правила">${routingIcon('chevron')}</button></div>
- <div class="routing-details" id="routing-details-${id}" ${open?'':'hidden'}>${r.description?`<p class="routing-desc">${escapeHtml(r.description)}</p>`:''}${routingRulesHtml(r)}<div class="routing-details-footer"><button class="btn btn-secondary btn-sm" onclick="openRoutingModal('${arg}')">Расширенные настройки · JSON</button>${r.isSystem?'<span class="help-text">Встроенный профиль. Для изменения создайте копию.</span>':''}</div></div></article>`;
+ <div class="routing-details" id="routing-details-${id}" ${open?'':'hidden'}>${r.description?`<p class="routing-desc">${escapeHtml(r.description)}</p>`:''}${routingSyncHtml(r)}${routingRulesHtml(r)}<div class="routing-details-footer"><button class="btn btn-secondary btn-sm" onclick="openRoutingModal('${arg}')">Расширенные настройки · JSON</button>${r.isSystem?'<span class="help-text">Встроенный профиль. Для изменения создайте копию.</span>':''}</div></div></article>`;
  }).join('');
 }
 

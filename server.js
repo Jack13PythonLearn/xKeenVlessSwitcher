@@ -9,6 +9,7 @@ const zlib = require('zlib');
 const os = require('os');
 const { createSubscriptionManager, publicSubscription, subscriptionUrl } = require('./lib/subscriptions');
 const { mergeChanges } = require('./lib/data-merge');
+const { createRoutingSync, SOURCES: routingSources, v2flyLists: routingSourceLists } = require('./lib/routing-sync');
 const { applyRoutingReplacements } = require('./lib/routing-replacements');
 const dataSnapshots = new WeakMap();
 
@@ -1954,6 +1955,21 @@ const initialData = loadData();
 const PORT = process.env.PORT || (initialData.settings && initialData.settings.port) || 3000;
 const subscriptions = createSubscriptionManager({ loadData, saveData, parseVlessUrl });
 
+const routingSync = createRoutingSync({ loadData, saveData, parseJson: parseJsonWithComments, apply: async (id, before, content) => {
+  const current = loadData();
+  const active = current.connections.find(c => c.id === current.settings.activeConnectionId);
+  if (!active || active.routingId !== id) return;
+  const file = current.settings.routingPath;
+  const previous = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : before;
+  try {
+    writeTargetFile(file, content);
+    if (current.settings.restartCommand?.trim()) {
+      const result = await runShellCommand(current.settings.restartCommand.trim());
+      if (result.code !== 0 || result.error) throw Error('Не удалось применить правила.');
+    }
+  } catch (e) { writeTargetFile(file, previous); if (current.settings.restartCommand?.trim()) await runShellCommand(current.settings.restartCommand.trim()); throw e; }
+} });
+
 // Create HTTP Server
 const server = http.createServer(async (req, res) => {
   const urlParts = req.url.split('?')[0];
@@ -1973,7 +1989,13 @@ const server = http.createServer(async (req, res) => {
   // GET /api/data
   if (urlParts === '/api/data' && req.method === 'GET') {
     const data = loadData();
-    return sendJson(res, 200, { ...data, subscriptions: data.subscriptions.map(x => publicSubscription(x, data.connections)), version: appVersion, updateRepository });
+    return sendJson(res, 200, { ...data, routingSources, routingSourceLists, subscriptions: data.subscriptions.map(x => publicSubscription(x, data.connections)), version: appVersion, updateRepository });
+  }
+
+  // Check pinned source versions before downloading and replacing managed domains.
+  if (urlParts === '/api/routing-sync/refresh' && req.method === 'POST') {
+    try { return sendJson(res, 200, await routingSync.refresh()); }
+    catch (e) { return sendJson(res, 400, { error: e.message }); }
   }
 
   // GET /api/version
@@ -3099,6 +3121,7 @@ const server = http.createServer(async (req, res) => {
           description: r.description || '',
           isSystem: Boolean(r.isSystem || r.id === 'routing_all_vpn' || r.id === 'routing_except_ru' || (!r.replacesSystemRouting && (r.name === 'Всё через VPN' || r.name === 'Всё через VPN кроме РФ' || r.name === 'Все кроме РФ через VPN'))),
           content: r.content || '',
+          domainSync: r.domainSync && typeof r.domainSync === 'object' ? r.domainSync : undefined,
           replacesSystemRouting: r.replacesSystemRouting === 'routing_except_ru' ? r.replacesSystemRouting : undefined,
           createdAt: r.createdAt || new Date().toISOString()
         }));
@@ -3113,7 +3136,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Always guarantee system routing 2 exists
-      const sysExceptRuIdx = restoredRoutings.findIndex(r => r.id === 'routing_except_ru' || r.name === 'Всё через VPN кроме РФ' || r.name === 'Все кроме РФ через VPN');
+      const sysExceptRuIdx = restoredRoutings.findIndex(r => r.id === 'routing_except_ru' || (!r.replacesSystemRouting && (r.name === 'Всё через VPN кроме РФ' || r.name === 'Все кроме РФ через VPN')));
       if (sysExceptRuIdx === -1) {
         restoredRoutings.splice(1, 0, { ...SYSTEM_ROUTING_EXCEPT_RU });
       } else {
@@ -3378,7 +3401,8 @@ if (require.main === module) server.listen(PORT, HOST, () => {
     startFailoverWatchdog();
     startAutoFailoverWatchdog();
     subscriptions.start();
+    routingSync.start();
     setTimeout(sweepGeoIpForConnections, 2000);
   }
 });
-module.exports = { server, loadData, saveData, parseVlessUrl, extractOutboundMetadata, measureConnectionHealth, subscriptions };
+module.exports = { routingSync, server, loadData, saveData, parseVlessUrl, extractOutboundMetadata, measureConnectionHealth, subscriptions };
