@@ -45,3 +45,28 @@ test('weekly scheduling and concurrent clicks avoid duplicate checks',async()=>{
 test('user edits during download are not overwritten',async()=>{
  const f=fixture();let release;const wait=new Promise(r=>release=r);const api=async p=>{await wait;return f.api(p);};const h=harness({...f,api});const pending=h.manager.refresh();h.edit(r=>r.content=JSON.stringify({routing:{rules:[]}}));release();await assert.rejects(pending,/Профиль изменён/);assert.deepEqual(JSON.parse(h.get().content).routing.rules,[]);
 });
+test('failure of the second source does not commit the first source changes',async()=>{
+ const f=fixture();let failSecond=false;const h=harness({...f,api:async p=>{if(failSecond&&p.startsWith('itdoginfo/'))throw Error('Second source failed');return f.api(p);}});
+ await h.manager.refresh();const before=h.get().content,versions=JSON.stringify(h.get().domainSync.sources);f.setText('new.example.com');failSecond=true;await assert.rejects(h.manager.refresh(),/Second source/);assert.equal(h.get().content,before);assert.equal(JSON.stringify(h.get().domainSync.sources),versions);assert.equal(h.applied(),0);
+});
+test('source comments change version but do not restart or change domain semantics',async()=>{
+ const f=fixture(),h=harness(f);await h.manager.refresh();const version=h.get().domainSync.sources.v2fly.version;f.setText('# updated comment\nexample.com\nfull:exact.example.com');const result=await h.manager.refresh();assert.equal(result.changed,false);assert.notEqual(h.get().domainSync.sources.v2fly.version,version);assert.equal(h.applied(),0);
+});
+test('manual source-domain removal remains excluded after source update',async()=>{
+ const f=fixture(),h=harness(f);await h.manager.refresh();h.edit(r=>{const j=JSON.parse(r.content);j.routing.rules[0].domain=j.routing.rules[0].domain.filter(x=>x!=='domain:example.com');r.content=JSON.stringify(j);});f.setText('example.com\nfull:exact.example.com\nnew.example.com');await h.manager.refresh();assert.ok(!JSON.parse(h.get().content).routing.rules[0].domain.includes('domain:example.com'));
+});
+test('retry schedule waits six hours after a failed check',async()=>{
+ const f=fixture();let calls=0,fail=false;const h=harness({...f,api:async p=>{calls++;if(fail)throw Error('Offline');return f.api(p);}});await h.manager.refresh();fail=true;await assert.rejects(h.manager.refresh());const n=calls;h.advance(5*3600000);await h.manager.tick();assert.equal(calls,n);h.advance(3600000);await assert.rejects(h.manager.tick());assert.ok(calls>n);
+});
+test('inserted rule does not receive or steal synchronized domains',async()=>{
+ const f=fixture(),h=harness(f);await h.manager.refresh();h.edit(r=>{const j=JSON.parse(r.content);j.routing.rules.unshift({type:'field',outboundTag:'direct',domain:['domain:keep.example.com']});r.content=JSON.stringify(j);});const before=h.get().content;f.setText('new.example.com');try{await h.manager.refresh();}catch{}const rules=JSON.parse(h.get().content).routing.rules;assert.deepEqual(rules[0].domain,['domain:keep.example.com']);assert.ok(h.get().content===before || rules[1].domain.includes('domain:new.example.com'));
+});
+test('nested list versions are tracked, and removed includes stop contributing domains',async()=>{
+ let nested='nested.example.com',include=true;
+ const hash=s=>crypto.createHash('sha1').update('blob '+Buffer.byteLength(s)+'\0'+s).digest('hex');
+ const api=async p=>{const files=p.startsWith('itdoginfo/')?{'Russia/outside-raw.lst':'outside.example.com'}:Object.fromEntries([...v2flyLists.map(n=>['data/'+n,'example.com'+(include?'\ninclude:test-child':'')]),...(include?[['data/test-child',nested]]:[])]);if(p.includes('/trees/'))return {tree:Object.entries(files).map(([path,s])=>({path,sha:hash(s),type:'blob'}))};const s=Object.values(files).find(s=>p.endsWith(hash(s)));assert.notEqual(s,undefined);return {encoding:'base64',content:Buffer.from(s).toString('base64')};};
+ const state=a=>Object.fromEntries(a.map(({id,unchanged,...s})=>[id,s]));const a=await fetchSources({},api);assert.ok(a[0].domains.includes('domain:nested.example.com'));nested='changed.example.com';const b=await fetchSources(state(a),api);assert.equal(b[0].unchanged,false);assert.ok(b[0].domains.includes('domain:changed.example.com'));include=false;const c=await fetchSources(state(b),api);assert.deepEqual(c[0].domains,['domain:example.com']);
+});
+test('corrupt Git blob is rejected before updating rules',async()=>{
+ const f=fixture();await assert.rejects(fetchSources({},async p=>{const r=await f.api(p);return p.includes('/blobs/')?{...r,content:Buffer.from('tampered.example.com').toString('base64')}:r;}),/Версия файла/);
+});
