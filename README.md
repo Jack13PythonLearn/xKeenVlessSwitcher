@@ -8,6 +8,18 @@
 curl -fsSL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/install.sh | sh
 ```
 
+Веб-панель для управления подключениями и маршрутизацией **XKeen / Xray** на роутерах с установленной средой **Entware** (Keenetic, OpenWrt и др.). Импорт подписок создаёт конфигурации Xray.
+
+<p align="center">
+  <img src="screenshot.png" alt="Подключения xKeenVlessSwitcher 2.1.0" width="100%" />
+</p>
+
+![Подписки и расписание обновления](docs/subscriptions.png)
+
+![Импорт подписки по ссылке](docs/import-subscription.png)
+
+На скриншотах показаны демонстрационные адреса, ключи и результаты проверки.
+
 ## Подписки по ссылке
 
 1. Откройте **Подписки → Добавить подписку**.
@@ -36,17 +48,6 @@ node --test
 
 Тесты используют временные файлы и искусственные серверы, без доступа к настройкам роутера. Для локального просмотра можно задать `XKEEN_DATA_DIR`, `HOST=127.0.0.1`, `PORT` и `XKEEN_DISABLE_BACKGROUND=1`, затем запустить `node server.js`. Последняя переменная выключает фоновые проверки и расписание подписок; не задавайте её в рабочей установке.
 
-Веб-панель для управления подключениями и маршрутизацией **XKeen / Xray** на роутерах с установленной средой **Entware** (Keenetic, OpenWrt и др.). Импорт подписок создаёт конфигурации Xray.
-
-<p align="center">
-  <img src="screenshot.png" alt="Подключения xKeenVlessSwitcher 2.1.0" width="100%" />
-</p>
-
-![Подписки и расписание обновления](docs/subscriptions.png)
-
-![Импорт подписки по ссылке](docs/import-subscription.png)
-
-На скриншотах показаны демонстрационные адреса, ключи и результаты проверки.
 
 ---
 
@@ -60,7 +61,7 @@ node --test
 - 🌐 **Модульная система роутингов:** 
   - Системные защищённые пресеты (*«Всё через VPN»*, *«Всё через VPN кроме РФ»*).
   - Создание и привязка персональных роутингов к подключениям.
-- 📱 **QR-коды и экспорт:** Генерация ссылок подключения (VLESS / VMess / Shadowsocks / Trojan) и QR-кодов для быстрой настройки смартфонов.
+- 📱 **QR-коды и экспорт:** Генерация ссылок подключения (VLESS / Hysteria2) и QR-кодов для быстрой настройки смартфонов.
 - 📂 **Умный редактор конфигураций:** Создание, форматирование, подсветка синтаксиса и валидация `outbound.json` и `routing.json` (с поддержкой комментариев `//` и `/* */`).
 - 📦 **Резервное копирование:** Быстрый экспорт и импорт базы подключений и роутингов в архивах ZIP и файлах JSON.
 - 📊 **Мониторинг службы XKeen:** Проверка статуса, запуск, остановка, перезапуск и просмотр логов терминала прямо в веб-интерфейсе.
@@ -74,7 +75,7 @@ node --test
 Подключитесь к роутеру по SSH и выполните одну команду:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/install.sh | sh
 ```
 
 *(Если репозиторий приватный, скрипт запросит GitHub Token или вы можете передать его заранее: `GITHUB_TOKEN="ваш_токен" sh install.sh`)*
@@ -94,7 +95,7 @@ curl -sL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/
 - **Способ 1 (через веб-интерфейс):** Если доступна новая версия, в нижнем баре появится кнопка **«Обновить»**. Нажмите её и подтвердите запуск — панель сама скачает обновление, сохранит бэкап настроек и перезапустится.
 - **Способ 2 (через терминал):** Запустите команду установки повторно:
   ```bash
-  curl -sL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/install.sh | sh
   ```
   Ваши настройки и профили (`data/profiles.json`) сохранятся автоматически.
 
@@ -113,6 +114,6 @@ curl -sL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/
 ## 🗑️ Удаление
 
 ```bash
-curl -sL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/uninstall.sh | sh
 ```
 Скрипт остановит службу, удалит файлы приложения и предложит опционально удалить Node.js.
