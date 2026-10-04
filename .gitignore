@@ -18,3 +18,11 @@ data/*
 # Logs and backups
 *.log
 *.zip
+
+# Local audit and release preparation
+/audit-source-*/
+/AUDIT-*.txt
+/audit-*.json
+/audit-*.cjs
+/audit-*.txt
+/release-*/

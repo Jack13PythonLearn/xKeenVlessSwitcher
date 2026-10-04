@@ -291,7 +291,7 @@ stop() {
   echo -n "Stopping $DESC... "
   if [ -f "$PIDFILE" ]; then
     PID=$(cat "$PIDFILE")
-    if kill -0 "$PID" 2>/dev/null; then
+    if kill -0 "$PID" 2>/dev/null && tr "\000" " " < "/proc/$PID/cmdline" | grep -F "$SERVER_JS" >/dev/null; then
       kill "$PID" 2>/dev/null
       sleep 1
       if kill -0 "$PID" 2>/dev/null; then
@@ -300,7 +300,7 @@ stop() {
     fi
     rm -f "$PIDFILE"
   else
-    killall -q node 2>/dev/null || true
+    echo "PID file is missing; unrelated Node processes were not stopped."
   fi
   echo "done."
 }

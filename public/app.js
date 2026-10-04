@@ -328,7 +328,7 @@ function renderConnections() {
     return `${heading}<article class="connection-row ${isActive ? 'active-conn' : ''}" id="card-conn-${conn.id}">
       <h3 class="conn-title">${flagHtml}<span class="conn-name" title="${escapeHtml(display.name)}">${escapeHtml(display.name)}</span>${lte && !/(?:^|[^a-zа-я])(?:lte|лте)(?=$|[^a-zа-я])/iu.test(display.name) ? '<span class="connection-lte-badge">LTE</span>' : ''}</h3>
       <div class="ping-status-wrap">${pingHtml}</div>
-      ${isActive ? '<span class="connection-active-label">✓ Активно</span>' : `<button class="btn btn-activate" onclick="activateConnection('${conn.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Активировать</button>`}
+      ${conn.requiresActivation ? `<button class="btn btn-secondary" onclick="activateConnection('${conn.id}')">Применить обновление</button>` : isActive ? '<span class="connection-active-label">✓ Активно</span>' : `<button class="btn btn-activate" onclick="activateConnection('${conn.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Активировать</button>`}
                 <div class="conn-footer-actions"><button class="btn btn-secondary btn-sm btn-icon" onclick="checkConnectionPing('${conn.id}')" ${isChecking ? 'disabled' : ''} title="Проверить доступность подключения" aria-label="Проверить доступность подключения"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></button>
             <button class="btn btn-secondary btn-sm btn-icon" onclick="openQrModal('${conn.id}')" title="Показать QR-код подключения">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M7 17h.01M17 17h.01M7 7h.01M17 7h.01"/></svg>
@@ -2500,12 +2500,12 @@ async function checkForUpdates(currentVersion) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(`https://api.github.com/repos/${appData.updateRepository}/releases/latest`, {
+    const res = await fetch('/api/app/latest', {
       headers: { 'Accept': 'application/vnd.github.v3+json' },
       signal: controller.signal
     });
     clearTimeout(timeoutId);
-    if (!res.ok) return;
+    if (!res.ok) {const problem=await res.json();showToast(problem.error || 'Не удалось проверить обновления', 'warning');return;}
 
     const release = await res.json();
     if (!release || !release.tag_name) return;
@@ -2662,13 +2662,14 @@ async function startAppUpdate() {
   // Step 1: Backup
   setUpdateStepState('up-step-backup', 'active');
   await new Promise(r => setTimeout(r, 400));
-  setUpdateStepState('up-step-backup', 'done', null, 'Резервная копия данных успешно создана');
+  setUpdateStepState('up-step-backup', 'active', null, 'Подготовка обновления и отката на сервере');
 
   // Step 2: Download
   setUpdateStepState('up-step-download', 'active', null, 'Загрузка архива с GitHub...');
 
   try {
     const payload = {
+      sha: latestReleaseInfo ? latestReleaseInfo.sha : '',
       tag: latestReleaseInfo ? latestReleaseInfo.tag_name : '',
       version: latestReleaseInfo ? latestReleaseInfo.tag_name : '',
       tarball_url: latestReleaseInfo ? latestReleaseInfo.tarball_url : ''
@@ -2686,7 +2687,8 @@ async function startAppUpdate() {
       throw new Error(data.error || `Ошибка сервера (${res.status})`);
     }
 
-    setUpdateStepState('up-step-download', 'done', null, 'Архив успешно скачан');
+    setUpdateStepState('up-step-backup', 'done', null, 'Подготовлен механизм отката кода');
+    setUpdateStepState('up-step-download', 'done', null, 'Файлы загружены и проверены');
     setUpdateStepState('up-step-extract', 'done', null, 'Файлы приложения обновлены');
 
     // Step 4: Restart
@@ -2744,6 +2746,7 @@ function pollServerAfterUpdate(expectedVersion) {
 
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
+        if(String(data.version).replace(/^v/,'')!==String(expectedVersion).replace(/^v/,'')) return;
         clearInterval(updatePollTimer);
         updatePollTimer = null;
         isUpdateInProgress = false;

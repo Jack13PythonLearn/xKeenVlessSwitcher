@@ -1,6 +1,6 @@
 {
   "name": "xkeen-vless-switcher",
-  "version": "2.1.13",
+  "version": "2.2.0",
   "updateRepository": "Jack13PythonLearn/xKeenVlessSwitcher",
   "description": "Simple Web UI for switching XKeen outbound and routing configurations",
   "main": "server.js",
@@ -8,8 +8,10 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node --test"
+    "test": "node --test test/*.test.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {}
 }

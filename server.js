@@ -12,6 +12,11 @@ const { mergeChanges } = require('./lib/data-merge');
 const { createRoutingSync, SOURCES: routingSources, v2flyLists: routingSourceLists } = require('./lib/routing-sync');
 const { applyRoutingReplacements } = require('./lib/routing-replacements');
 const dataSnapshots = new WeakMap();
+const {createQueue, atomicWrite, applyFiles} = require('./lib/operations');
+const applyQueue = createQueue();
+const {validateIds}=require('./lib/validation');
+let automationGeneration = 0;
+
 
 const DATA_DIR = process.env.XKEEN_DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'profiles.json');
@@ -20,6 +25,7 @@ const AUTOFAILOVER_LOG_FILE = path.join(DATA_DIR, 'autofailover_history.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 let isUpdatingApp = false;
+const access = require('./lib/access').createAccess({dir:DATA_DIR,allowedHosts:(process.env.XKEEN_ALLOWED_HOSTS||'').split(',').filter(Boolean)});
 
 // Ensure data directory exists
 if (!fs.existsSync(path.dirname(DATA_FILE))) {
@@ -990,12 +996,12 @@ function evaluateServiceStatus(res) {
     return 'error';
   }
 
-  if (combined.includes('is running') || combined.includes(' running') || combined.includes('[ok] xray is running') || combined.includes('active (running)') || combined.includes('работает') || (combined.includes('запущен') && !combined.includes('не запущен') && !combined.includes('не работает'))) {
-    return 'running';
-  }
-
   if (combined.includes('stopped') || combined.includes('not running') || combined.includes('is not running') || combined.includes('is dead') || combined.includes('inactive') || combined.includes('остановлен') || combined.includes('не запущен') || combined.includes('не работает')) {
     return 'stopped';
+  }
+
+  if (combined.includes('is running') || combined.includes(' running') || combined.includes('[ok] xray is running') || combined.includes('active (running)') || combined.includes('работает') || (combined.includes('запущен') && !combined.includes('не запущен') && !combined.includes('не работает'))) {
+    return 'running';
   }
 
   if (res.success && res.code === 0) {
@@ -1006,13 +1012,7 @@ function evaluateServiceStatus(res) {
 }
 
 // Write target file safely
-function writeTargetFile(filePath, content) {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(filePath, content, 'utf8');
-}
+function writeTargetFile(filePath, content) { atomicWrite(filePath,content); }
 
 // --- PURE JS ZIP CREATOR & PARSER ---
 function getDosDateTime(d = new Date()) {
@@ -1115,6 +1115,8 @@ function createZipBuffer(files) {
 
 function parseZipBuffer(buf) {
   const entries = [];
+  let expandedSize = 0;
+  if (buf.length > 12 * 1024 * 1024) throw Error('Архив превышает 12 МБ.');
   if (!Buffer.isBuffer(buf) || buf.length < 22) return entries;
   let eocdOffset = -1;
   for (let i = buf.length - 22; i >= 0; i--) {
@@ -1126,6 +1128,7 @@ function parseZipBuffer(buf) {
 
   if (eocdOffset !== -1) {
     const cdEntries = buf.readUInt16LE(eocdOffset + 10);
+    if (cdEntries > 6000) throw Error('Слишком много файлов в архиве.');
     let cdOffset = buf.readUInt32LE(eocdOffset + 16);
     let count = 0;
     while (cdOffset + 46 <= buf.length && count < cdEntries) {
@@ -1134,6 +1137,8 @@ function parseZipBuffer(buf) {
 
       const compMethod = buf.readUInt16LE(cdOffset + 10);
       const compSize = buf.readUInt32LE(cdOffset + 20);
+      const unpackedSize = buf.readUInt32LE(cdOffset + 24);
+      if(unpackedSize>16*1024*1024-expandedSize) throw Error('Распакованный архив превышает 16 МБ.');
       const fnameLen = buf.readUInt16LE(cdOffset + 28);
       const extraLen = buf.readUInt16LE(cdOffset + 30);
       const commentLen = buf.readUInt16LE(cdOffset + 32);
@@ -1162,13 +1167,16 @@ function parseZipBuffer(buf) {
               strContent = rawData.toString('utf8');
             } else if (compMethod === 8) {
               try {
-                strContent = zlib.inflateRawSync(rawData).toString('utf8');
+                strContent = zlib.inflateRawSync(rawData, {maxOutputLength:16*1024*1024-expandedSize}).toString('utf8');
               } catch (e) {
                 try {
-                  strContent = zlib.inflateSync(rawData).toString('utf8');
-                } catch (e2) {}
+                  strContent = zlib.inflateSync(rawData, {maxOutputLength:16*1024*1024-expandedSize}).toString('utf8');
+                } catch (e2) { throw Error('Архив повреждён или превышает лимит распаковки.'); }
               }
             }
+            expandedSize += Buffer.byteLength(strContent);
+            if (expandedSize > 16*1024*1024) throw Error('Распакованный архив превышает 16 МБ.');
+            if(![0,8].includes(compMethod)) throw Error('Метод сжатия ZIP не поддерживается.');
             entries.push({ filename, content: strContent });
           }
         }
@@ -1241,6 +1249,8 @@ function loadDataRaw() {
     if (fs.existsSync(DATA_FILE)) {
       const content = fs.readFileSync(DATA_FILE, 'utf8');
       const parsed = JSON.parse(content);
+      if (!parsed || typeof parsed!=='object' || Array.isArray(parsed) || !parsed.settings || (!Array.isArray(parsed.connections) && !Array.isArray(parsed.profiles))) throw Error('Invalid database');
+      validateIds(parsed);
       data.subscriptions = Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [];
 
       data.settings = {
@@ -1376,7 +1386,7 @@ function loadDataRaw() {
       return applyRoutingReplacements(data);
     }
   } catch (err) {
-    console.error('Error loading profiles.json:', err);
+    throw new Error('База настроек повреждена или недоступна. Восстановите проверенную резервную копию; исходный файл сохранён.');
   }
 
   return applyRoutingReplacements(data);
@@ -1391,76 +1401,64 @@ function loadData() {
 
 function saveData(data) {
   try {
+    validateIds(data);
     const base = dataSnapshots.get(data);
     const next = base ? mergeChanges(base, data, loadDataRaw()) : data;
-    const temp = DATA_FILE + '.tmp';
-    fs.writeFileSync(temp, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 });
-    fs.renameSync(temp, DATA_FILE);
+    validateIds(next);
+    if(fs.existsSync(DATA_FILE)) {loadDataRaw();atomicWrite(DATA_FILE+'.last-good',fs.readFileSync(DATA_FILE));}
+    atomicWrite(DATA_FILE, JSON.stringify(next, null, 2));
     // Track this request's own state; unrelated concurrent additions remain in the file.
     dataSnapshots.set(data, structuredClone(data));
     return true;
   } catch (err) {
-    console.error('Error saving data to profiles.json:', err);
-    return false;
+    throw new Error('Не удалось сохранить настройки. Проверьте свободное место и права доступа.');
   }
 }
 
 // Internal: Activate connection files and execute restart command
-async function activateConnectionInternal(connId, data, updateActiveState = true) {
-  const conn = data.connections.find(c => c.id === connId);
-  if (!conn) {
-    throw new Error('Подключение не найдено');
-  }
-
-  let routing = data.routings.find(r => r.id === conn.routingId);
-  if (!routing) {
-    routing = data.routings.find(r => r.id === 'routing_all_vpn') || SYSTEM_ROUTING_ALL_VPN;
-  }
-
-  const { outboundPath, routingPath, restartCommand } = data.settings;
-  const fileWriteStatus = { outbound: false, routing: false, error: null };
-  let restartStatus = { executed: false, output: '', error: '' };
-
+async function validateTargetFiles(files) {
+  for (const file of files) parseJsonWithComments(file.content);
+  const binary = findXrayPath();
+  if (!binary) return; // Developer/test environments do not have Xray.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xkeen-validate-'));
   try {
-    writeTargetFile(outboundPath, conn.outboundContent);
-    fileWriteStatus.outbound = true;
-
-    writeTargetFile(routingPath, routing.content);
-    fileWriteStatus.routing = true;
-  } catch (err) {
-    console.error('File write error during activation:', err);
-    fileWriteStatus.error = err.message;
-  }
-
-  if (restartCommand && restartCommand.trim()) {
-    const resCmd = await runShellCommand(restartCommand.trim());
-    restartStatus.executed = true;
-    restartStatus.output = resCmd.stdout;
-    restartStatus.error = resCmd.stderr || resCmd.error || '';
-
-    const computedStatus = evaluateServiceStatus(resCmd);
-    lastServiceStatus = {
-      status: computedStatus,
-      output: resCmd.stdout,
-      error: resCmd.stderr || resCmd.error || '',
-      code: resCmd.code,
-      timestamp: new Date().toISOString(),
-      command: restartCommand.trim()
+    const parents = [...new Set(files.map(f=>path.dirname(f.path)))];
+    for (const parent of parents) if (fs.existsSync(parent)) {
+      for (const name of fs.readdirSync(parent).filter(n=>n.endsWith('.json'))) {
+        fs.copyFileSync(path.join(parent,name),path.join(dir,name));
+        fs.chmodSync(path.join(dir,name),0o600);
+      }
+    }
+    for (const file of files) fs.writeFileSync(path.join(dir,path.basename(file.path)),file.content,{mode:0o600});
+    await new Promise((resolve,reject)=>require('child_process').execFile(binary,['run','-test','-confdir',dir],{timeout:10000},error=>error?reject(Error('Xray отклонил конфигурацию.')):resolve()));
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+}
+async function restartChecked(command,statusCommand) {
+  if (!command?.trim()) return;
+  const result = await runShellCommand(command.trim());
+  if (result.code !== 0 || result.error) throw Error('Служба не перезапустилась.');
+  if(statusCommand?.trim() && evaluateServiceStatus(await runShellCommand(statusCommand.trim()))!=='running') throw Error('Служба не подтвердила запуск.');
+}
+async function activateConnectionInternal(connId, data, updateActiveState = true, extraGuard = () => {}) {
+  const generation = automationGeneration;
+  const baseline = dataSnapshots.get(data) || loadData();
+  const expectedActive = baseline.settings.activeConnectionId;
+  const expectedConn = baseline.connections.find(c=>c.id===connId);
+  const conn = data.connections.find(c=>c.id===connId);
+  if (!conn) throw Error('Подключение не найдено');
+  const routing = data.routings.find(r=>r.id===conn.routingId) || SYSTEM_ROUTING_ALL_VPN;
+  return applyQueue(async()=>{
+    const guard = () => {
+      extraGuard();
+      const latest=loadData(), candidate=latest.connections.find(c=>c.id===connId);
+      if (isUpdatingApp || generation!==automationGeneration || latest.settings.activeConnectionId!==expectedActive || candidate?.outboundContent!==expectedConn?.outboundContent || candidate?.routingId!==expectedConn?.routingId || JSON.stringify(latest.routings)!==JSON.stringify(baseline.routings)) throw Error('Настройки изменились. Операция отменена.');
     };
-  }
-
-  if (updateActiveState) {
-    data.settings.activeConnectionId = connId;
-    saveData(data);
-  }
-
-  return {
-    conn,
-    routing,
-    fileWriteStatus,
-    restartStatus,
-    serviceStatus: lastServiceStatus
-  };
+    await applyFiles({files:[{path:data.settings.outboundPath,content:conn.outboundContent},{path:data.settings.routingPath,content:routing.content}],guard,validate:validateTargetFiles,restart:()=>restartChecked(data.settings.restartCommand,data.settings.statusCommand),persist:()=>{
+      if(updateActiveState) {data.settings.activeConnectionId=connId;delete conn.requiresActivation;saveData(data);}
+    }});
+    lastServiceStatus={status:'running',output:'Конфигурация применена',error:'',code:0,timestamp:new Date().toISOString()};
+    return {conn,routing,fileWriteStatus:{outbound:true,routing:true,error:null},restartStatus:{executed:!!data.settings.restartCommand,output:'',error:''},serviceStatus:lastServiceStatus};
+  });
 }
 
 // ==============================================================================
@@ -1544,8 +1542,10 @@ function startFailoverWatchdog() {
 }
 
 async function failoverTick() {
-  if (failoverRunning) return;
+  if (failoverRunning || isUpdatingApp) return;
 
+  const cycleGeneration=automationGeneration;
+  const guard=()=>{if(cycleGeneration!==automationGeneration || !loadData().settings.failover?.enabled) throw Error('Настройки изменились, проверка отменена.');};
   const data = loadData();
   const fo = data.settings && data.settings.failover;
   if (!fo || !fo.enabled) return;
@@ -1586,6 +1586,7 @@ async function failoverTick() {
     const ruHost = (fo.ruCheckHost || '77.88.8.8').trim();
     const ruPort = parseInt(fo.ruCheckPort, 10) || 53;
     const ruPing = await measureTcpLatency(ruHost, ruPort, 2000);
+      guard();
 
     fo.lastCheckAt = new Date().toISOString();
 
@@ -1602,11 +1603,13 @@ async function failoverTick() {
     if (!isCurrentlyOnBackup) {
       // Normal state (Primary active): check if Primary VLESS / foreign internet works
       const primPing = await measureConnectionHealth(primaryConn, { timeout: 3500, canaryUrl: fo.canaryUrl });
+      guard();
       let healthy = primPing.ok;
 
       // If TCP socket opened but proxy check was skipped, also test Canary URL
       if (healthy && fo.canaryUrl && primPing.checkType !== 'proxy') {
         const canaryRes = await checkCanary(fo.canaryUrl, 3500);
+      guard();
         healthy = canaryRes.ok;
       }
 
@@ -1622,6 +1625,8 @@ async function failoverTick() {
           fo.lastSwitchAt = new Date().toISOString();
           fo.lastLog = `Блокировка БС! Переключено на "${backupConn.name}"`;
 
+          await activateConnectionInternal(fo.primaryConnectionId, data, true, guard);
+          guard();
           appendFailoverHistory({
             event: 'switch_to_backup',
             title: 'Переключение на БС (Резерв)',
@@ -1630,7 +1635,6 @@ async function failoverTick() {
             reason: `Зафиксировано сбоев проверок подряд: ${fo.failThreshold || 3}. Домашний интернет в РФ доступен.`
           });
 
-          await activateConnectionInternal(fo.backupConnectionId, data, true);
           failoverCooldownUntil = Date.now() + 60000;
         }
       } else {
@@ -1641,6 +1645,7 @@ async function failoverTick() {
     } else {
       // Backup state: probe if Primary connection is unblocked
       const primPing = await measureConnectionHealth(primaryConn, { timeout: 3500, canaryUrl: fo.canaryUrl });
+      guard();
 
       if (primPing.ok) {
         fo.consecutiveSuccesses = (fo.consecutiveSuccesses || 0) + 1;
@@ -1661,7 +1666,6 @@ async function failoverTick() {
             reason: `Основной сервер ответил успешно ${fo.recoveryThreshold || 3} раз(а) подряд (блокировка зарубежных серверов снята).`
           });
 
-          await activateConnectionInternal(fo.primaryConnectionId, data, true);
           failoverCooldownUntil = Date.now() + 60000;
         }
       } else {
@@ -1671,6 +1675,7 @@ async function failoverTick() {
       }
     }
 
+    guard();
     saveData(data);
   } catch (err) {
     console.error('[Failover] Error in watchdog tick:', err);
@@ -1733,180 +1738,11 @@ function startAutoFailoverWatchdog() {
   console.log('[AutoFailover] Фоновый монитор авто-резерва запущен');
 }
 
+let autoReserve;
 async function autoFailoverTick() {
-  if (autoFailoverRunning) return;
-
-  const data = loadData();
-  const af = data.settings && data.settings.autoFailover;
-  if (!af || !af.enabled) return;
-
-  // Если активен режим Белых Списков (ТСПУ глушит зарубежный трафик), авто-резерв приостанавливается
-  const fo = data.settings && data.settings.failover;
-  if (fo && fo.enabled && fo.state === 'backup') {
-    af.state = 'suspended';
-    af.lastLog = 'Режим БС активен. Авто-резерв приостановлен.';
-    saveData(data);
-    return;
-  }
-
-  const now = Date.now();
-  if (now < autoFailoverCooldownUntil) {
-    return;
-  }
-
-  const intervalMs = Math.max(10, (af.checkIntervalSec || 20)) * 1000;
-  if (now - lastAutoFailoverCheckTime < intervalMs) {
-    return;
-  }
-
-  lastAutoFailoverCheckTime = now;
-  autoFailoverRunning = true;
-
-  try {
-    // 1. Определение основного (желаемого) подключения
-    let primaryId = (af.primaryMode === 'specific_id' && af.specificPrimaryId)
-      ? af.specificPrimaryId
-      : (af.preferredPrimaryId || data.settings.activeConnectionId);
-
-    if (!af.preferredPrimaryId && primaryId) {
-      af.preferredPrimaryId = primaryId;
-    }
-
-    const primaryConn = data.connections.find(c => c.id === primaryId);
-    if (!primaryConn) {
-      af.lastLog = 'Ошибка: основное подключение не найдено';
-      saveData(data);
-      return;
-    }
-
-    const currentActiveId = data.settings.activeConnectionId;
-    const isCurrentlyOnBackup = (af.state === 'backup' && af.activeBackupId && currentActiveId === af.activeBackupId);
-
-    af.lastCheckAt = new Date().toISOString();
-
-    if (!isCurrentlyOnBackup) {
-      // Штатный режим: проверяем основное/текущее подключение
-      const primPing = await measureConnectionHealth(primaryConn, { timeout: 3000, canaryUrl: af.canaryUrl });
-      let healthy = primPing.ok;
-
-      // Если сокет ответил, но сквозной прокси не проверялся, контрольно проверяем сквозной запрос
-      if (healthy && af.canaryUrl && primPing.checkType !== 'proxy') {
-        const canaryRes = await checkCanary(af.canaryUrl, 3000);
-        healthy = canaryRes.ok;
-      }
-
-      if (!healthy) {
-        af.consecutiveFails = (af.consecutiveFails || 0) + 1;
-        af.consecutiveSuccesses = 0;
-        af.lastLog = `Основное подключение не отвечает (${af.consecutiveFails}/${af.failThreshold || 3})`;
-
-        if (af.consecutiveFails >= (af.failThreshold || 3)) {
-          // Поиск кандидатов из пула
-          let poolIds = (Array.isArray(af.poolConnectionIds) && af.poolConnectionIds.length > 0)
-            ? af.poolConnectionIds
-            : data.connections.map(c => c.id);
-
-          const candidateConns = data.connections.filter(c => c.id !== primaryId && poolIds.includes(c.id));
-          if (candidateConns.length === 0) {
-            af.lastLog = 'Сбой основного, но в пуле резерва нет других подключений';
-            saveData(data);
-            return;
-          }
-
-          // Опрос кандидатов с измерением реальной доступности туннеля
-          const alive = [];
-          for (const c of candidateConns) {
-            const res = await measureConnectionHealth(c, { timeout: 2500, canaryUrl: af.canaryUrl });
-            if (res.ok) {
-              alive.push({ conn: c, latency: res.latency });
-            }
-          }
-
-          if (alive.length === 0) {
-            af.lastLog = `Сбой основного! Все серверы из пула (${candidateConns.length}) также недоступны`;
-            saveData(data);
-            return;
-          }
-
-          let selected;
-          if (af.strategy === 'priority_order') {
-            selected = alive[0]; // Первый живой по порядку в пуле
-          } else {
-            alive.sort((a, b) => a.latency - b.latency);
-            selected = alive[0]; // Минимальный пинг
-          }
-
-          const backupConn = selected.conn;
-          console.log(`[AutoFailover] Switching to backup: "${backupConn.name}" (${selected.latency} ms)`);
-          af.state = 'backup';
-          af.activeBackupId = backupConn.id;
-          af.consecutiveFails = 0;
-          af.consecutiveSuccesses = 0;
-          af.lastSwitchAt = new Date().toISOString();
-          af.lastLog = `Сбой основного! Включен резерв "${backupConn.name}" (${selected.latency} ms)`;
-
-          appendAutoFailoverHistory({
-            event: 'switch_to_backup',
-            title: 'Переключение на резерв',
-            fromName: primaryConn.name,
-            toName: backupConn.name,
-            reason: `Основное подключение не отвечает (${af.failThreshold || 3} сбоя подряд). Выбран резерв "${backupConn.name}" (пинг: ${selected.latency} ms, стратегия: ${af.strategy === 'priority_order' ? 'по порядку' : 'наименьший пинг'}).`
-          });
-
-          await activateConnectionInternal(backupConn.id, data, true);
-          autoFailoverCooldownUntil = Date.now() + 60000;
-        }
-      } else {
-        af.state = 'normal';
-        af.consecutiveFails = 0;
-        af.activeBackupId = null;
-        af.lastLog = `Основное подключение "${primaryConn.name}" стабильно (${primPing.latency} ms)`;
-      }
-    } else {
-      // Режим резерва: проверяем восстановление основного подключения
-      if (af.autoReturn) {
-        const primPing = await measureConnectionHealth(primaryConn, { timeout: 3000, canaryUrl: af.canaryUrl });
-        if (primPing.ok) {
-          af.consecutiveSuccesses = (af.consecutiveSuccesses || 0) + 1;
-          af.lastLog = `Основной сервер "${primaryConn.name}" отвечает (${af.consecutiveSuccesses}/${af.recoveryThreshold || 3}, пинг ${primPing.latency} ms)`;
-
-          if (af.consecutiveSuccesses >= (af.recoveryThreshold || 3)) {
-            console.log(`[AutoFailover] Primary recovered! Switching back to: ${primaryConn.name}`);
-            af.state = 'normal';
-            af.activeBackupId = null;
-            af.consecutiveSuccesses = 0;
-            af.lastSwitchAt = new Date().toISOString();
-            af.lastLog = `Основной сервер восстановился! Возврат на "${primaryConn.name}"`;
-
-            const currentConn = data.connections.find(c => c.id === currentActiveId);
-            appendAutoFailoverHistory({
-              event: 'switch_to_primary',
-              title: 'Возврат на основное подключение',
-              fromName: currentConn ? currentConn.name : 'Резерв',
-              toName: primaryConn.name,
-              reason: `Основной сервер стабильно ответил ${af.recoveryThreshold || 3} раз(а) подряд (пинг: ${primPing.latency} ms).`
-            });
-
-            await activateConnectionInternal(primaryId, data, true);
-            autoFailoverCooldownUntil = Date.now() + 60000;
-          }
-        } else {
-          af.consecutiveSuccesses = 0;
-          const currentConn = data.connections.find(c => c.id === currentActiveId);
-          af.lastLog = `Резерв "${currentConn ? currentConn.name : 'Резерв'}" активен. Основной пока недоступен.`;
-        }
-      } else {
-        const currentConn = data.connections.find(c => c.id === currentActiveId);
-        af.lastLog = `Резерв "${currentConn ? currentConn.name : 'Резерв'}" активен (автовозврат отключен).`;
-      }
-    }
-
-    saveData(data);
-  } catch (err) {
-    console.error('[AutoFailover] Error in watchdog tick:', err);
-  } finally {
-    autoFailoverRunning = false;
-  }
+  if(isUpdatingApp) return;
+  if (!autoReserve) autoReserve=require('./lib/auto-reserve').createAutoReserve({loadData,saveData,health:measureConnectionHealth,activate:activateConnectionInternal,history:appendAutoFailoverHistory,generation:()=>automationGeneration});
+  try {await autoReserve.tick();} catch { /* A stale cycle must never overwrite newer settings. */ }
 }
 
 // MIME types for static server
@@ -1928,7 +1764,6 @@ const MIME_TYPES = {
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-HTTP-Method-Override'
   });
@@ -1939,9 +1774,19 @@ function sendJson(res, statusCode, data) {
 function parseJsonBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => body += chunk.toString());
+    const decoder=new (require('node:string_decoder').StringDecoder)('utf8');
+    let size = 0, exceeded = false;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > 16 * 1024 * 1024) { exceeded = true; body = ''; return; }
+      if (!exceeded) body += decoder.write(chunk);
+    });
+    req.on('aborted', () => reject(Error('Запрос прерван.')));
+    req.on('error', reject);
     req.on('end', () => {
       try {
+        if (exceeded) throw Error('Запрос превышает допустимый размер 16 МБ.');
+        body+=decoder.end();
         resolve(body ? JSON.parse(body) : {});
       } catch (err) {
         reject(err);
@@ -1951,39 +1796,35 @@ function parseJsonBody(req) {
 }
 
 // Initialize data and port
-const initialData = loadData();
+let initialData;
+try { initialData = loadData(); } catch { initialData = {settings:{port:3000}}; }
 const PORT = process.env.PORT || (initialData.settings && initialData.settings.port) || 3000;
 const subscriptions = createSubscriptionManager({ loadData, saveData, parseVlessUrl });
 
-const routingSync = createRoutingSync({ loadData, saveData, parseJson: parseJsonWithComments, apply: async (id, before, content) => {
-  const current = loadData();
-  const active = current.connections.find(c => c.id === current.settings.activeConnectionId);
-  if (!active || active.routingId !== id) return;
-  const file = current.settings.routingPath;
-  const previous = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : before;
-  try {
-    writeTargetFile(file, content);
-    if (current.settings.restartCommand?.trim()) {
-      const result = await runShellCommand(current.settings.restartCommand.trim());
-      if (result.code !== 0 || result.error) throw Error('Не удалось применить правила.');
-    }
-  } catch (e) { writeTargetFile(file, previous); if (current.settings.restartCommand?.trim()) await runShellCommand(current.settings.restartCommand.trim()); throw e; }
+const routingSync = createRoutingSync({ loadData, saveData, parseJson: parseJsonWithComments, apply: async (id) => {
+  const current=loadData();const active=current.connections.find(c=>c.id===current.settings.activeConnectionId);
+  if(active?.routingId===id) await activateConnectionInternal(active.id,current,true);
 } });
 
 // Create HTTP Server
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   const urlParts = req.url.split('?')[0];
 
-  // CORS Preflight
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-HTTP-Method-Override'
-    });
-    return res.end();
-  }
 
+  if (urlParts.startsWith('/api/')) {
+    if(isUpdatingApp && ['POST','PUT','DELETE'].includes(req.method)) return sendJson(res,409,{error:'Обновление приложения выполняется. Изменения временно заблокированы.'});
+    res.setHeader('Cache-Control','no-store');
+    if(Number(req.headers['content-length'])>16*1024*1024) return sendJson(res,413,{error:'Размер запроса превышает лимит 16 МиБ.'});
+    if (!access.trustedOrigin(req)) return sendJson(res,403,{error:'Недопустимый источник запроса.'});
+    if (req.method==='OPTIONS') {res.writeHead(204);return res.end();}
+    if (urlParts==='/api/auth/login' && req.method==='POST') {
+      try {const body=await parseJsonBody(req);res.setHeader('Set-Cookie',access.login(req,body.key));return sendJson(res,200,{ok:true});}
+      catch {return sendJson(res,403,{error:'Вход не выполнен. Проверьте ключ или повторите через минуту.'});}
+    }
+    if (!access.authorized(req)) return sendJson(res,401,{error:'Требуется вход в панель.'});
+    if(urlParts==='/api/auth/logout' && req.method==='POST') {res.setHeader('Set-Cookie',access.logout(req));return sendJson(res,200,{ok:true});}
+  }
+  if (['POST','PUT','DELETE'].includes(req.method) && (/^\/api\/(settings|autofailover\/(settings|toggle)|failover\/(settings|toggle)|backup\/restore|connections|subscriptions|service|routings|routing-sync)/.test(urlParts) || /\/(activate|set-routing)$/.test(urlParts))) automationGeneration++;
   // --- API ROUTES ---
 
   // GET /api/data
@@ -2000,6 +1841,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/version
   if (urlParts === '/api/version' && req.method === 'GET') {
+    loadData();
     return sendJson(res, 200, { version: appVersion, updateRepository });
   }
 
@@ -2027,152 +1869,31 @@ const server = http.createServer(async (req, res) => {
     } catch (err) { return sendJson(res, 400, { error: err.message }); }
   }
 
-  // POST /api/app/update - Update application to new version from GitHub
-  if (urlParts === '/api/app/update' && req.method === 'POST') {
-    if (isUpdatingApp) {
-      return sendJson(res, 409, { error: 'Процесс обновления уже запущен. Пожалуйста, подождите.' });
-    }
-
-    isUpdatingApp = true;
+  if(urlParts==='/api/app/latest' && req.method==='GET') {
+    try {const info=await require('./lib/updater').createUpdater({root:__dirname,dataDir:DATA_DIR,repository:updateRepository}).latest();const {files,...visible}=info;return sendJson(res,200,visible);}
+    catch(error) {return sendJson(res,400,{error:error.message});}
+  }
+  if(urlParts==='/api/app/update' && req.method==='POST') {
+    if(isUpdatingApp) return sendJson(res,409,{error:'Обновление уже выполняется.'});
+    isUpdatingApp=true;
+    automationGeneration++;
     try {
-      const body = await parseJsonBody(req).catch(() => ({}));
-      const requestedTag = body.tag || (body.version ? (body.version.startsWith('v') ? body.version : 'v' + body.version) : null);
-      if (!updateRepository) throw new Error('Репозиторий обновлений не настроен');
-      if (requestedTag && !/^[\w.-]+$/.test(requestedTag)) throw new Error('Некорректная версия обновления');
-
-      // 1. Создание резервной копии профилей и настроек
-      if (fs.existsSync(DATA_FILE)) {
-        try {
-          const dataDir = path.dirname(DATA_FILE);
-          const bakPath = path.join(dataDir, 'profiles.json.bak_before_update');
-          const bakTimed = path.join(dataDir, `profiles.json.bak_${Date.now()}`);
-          fs.copyFileSync(DATA_FILE, bakPath);
-          fs.copyFileSync(DATA_FILE, bakTimed);
-          console.log('[Updater] Резервная копия базы сохранена в', bakPath);
-        } catch (bakErr) {
-          console.warn('[Updater] Не удалось создать бэкап profiles.json:', bakErr.message);
-        }
-      }
-
-      // 2. Определение URL для загрузки
-      let downloadUrl;
-      if (!downloadUrl) {
-        if (requestedTag && requestedTag !== 'latest') {
-          downloadUrl = `https://github.com/${updateRepository}/archive/refs/tags/${requestedTag}.tar.gz`;
-        } else {
-          downloadUrl = `https://github.com/${updateRepository}/archive/refs/heads/main.tar.gz`;
-        }
-      }
-
-      console.log(`[Updater] Запуск обновления до ${requestedTag || 'последней версии'}. URL: ${downloadUrl}`);
-
-      // 3. Подготовка временной директории
-      const baseTmp = fs.existsSync('/opt/tmp') ? '/opt/tmp' : os.tmpdir();
-      const updateTmpDir = path.join(baseTmp, `xkeen-update-${Date.now()}`);
-      fs.mkdirSync(updateTmpDir, { recursive: true });
-      const archiveFile = path.join(updateTmpDir, 'release.tar.gz');
-
-      // 4. Скачивание архива (curl с fallback на https)
-      let downloaded = false;
-      const curlRes = await runShellCommand(`curl -f -s -L --connect-timeout 10 --max-time 60 "${downloadUrl}" -o "${archiveFile}"`, 65000);
-      if (curlRes.success && fs.existsSync(archiveFile) && fs.statSync(archiveFile).size > 1000) {
-        downloaded = true;
-        console.log(`[Updater] Архив успешно скачан через curl (${fs.statSync(archiveFile).size} байт)`);
-      } else {
-        console.log('[Updater] Загрузка через curl не удалась или файл пуст, пробуем через Node.js https...');
-        try {
-          await downloadFileWithRedirects(downloadUrl, archiveFile);
-          if (fs.existsSync(archiveFile) && fs.statSync(archiveFile).size > 1000) {
-            downloaded = true;
-            console.log(`[Updater] Архив успешно скачан через https (${fs.statSync(archiveFile).size} байт)`);
-          }
-        } catch (dlErr) {
-          console.error('[Updater] Ошибка скачивания через https:', dlErr.message);
-        }
-      }
-
-      if (!downloaded || !fs.existsSync(archiveFile) || fs.statSync(archiveFile).size < 1000) {
-        try { fs.rmSync(updateTmpDir, { recursive: true, force: true }); } catch (e) {}
-        isUpdatingApp = false;
-        return sendJson(res, 500, { error: `Не удалось загрузить архив обновления с GitHub (${downloadUrl}). Проверьте подключение к интернету на роутере.` });
-      }
-
-      // 5. Распаковка архива
-      console.log('[Updater] Распаковка архива обновления...');
-      const extractRes = await runShellCommand(`tar -xzf "${archiveFile}" -C "${updateTmpDir}"`, 30000);
-      if (extractRes.code !== 0) {
-        try { fs.rmSync(updateTmpDir, { recursive: true, force: true }); } catch (e) {}
-        isUpdatingApp = false;
-        return sendJson(res, 500, { error: `Ошибка распаковки архива обновления: ${extractRes.stderr || extractRes.error}` });
-      }
-
-      // 6. Поиск распакованной директории с исходным кодом
-      let extractedRoot = '';
-      const dirEntries = fs.readdirSync(updateTmpDir);
-      for (const entry of dirEntries) {
-        const full = path.join(updateTmpDir, entry);
-        if (fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, 'server.js'))) {
-          extractedRoot = full;
-          break;
-        }
-      }
-      if (!extractedRoot && fs.existsSync(path.join(updateTmpDir, 'server.js'))) {
-        extractedRoot = updateTmpDir;
-      }
-
-      if (!extractedRoot || !fs.existsSync(path.join(extractedRoot, 'server.js')) || !fs.existsSync(path.join(extractedRoot, 'package.json'))) {
-        try { fs.rmSync(updateTmpDir, { recursive: true, force: true }); } catch (e) {}
-        isUpdatingApp = false;
-        return sendJson(res, 500, { error: 'В архиве обновления не обнаружены необходимые файлы приложения (server.js, package.json).' });
-      }
-
-      // 7. Безопасная установка файлов в текущую директорию приложения (__dirname)
-      // Исключаем папку 'data', чтобы ни при каких обстоятельствах не затереть пользовательские настройки и профили
-      console.log(`[Updater] Копирование обновлённых файлов из ${extractedRoot} в ${__dirname}...`);
-      copyDirRecursiveSync(extractedRoot, __dirname, ['data', '.git', '.github', '.system_generated', 'node_modules']);
-
-      // 8. Считывание новой версии
-      let newInstalledVersion = requestedTag || '2.0.0';
-      try {
-        const newPkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
-        if (newPkg.version) {
-          newInstalledVersion = newPkg.version;
-          appVersion = newPkg.version;
-        }
-      } catch (e) {}
-
-      // 9. Очистка временных файлов архива
-      try {
-        fs.rmSync(updateTmpDir, { recursive: true, force: true });
-      } catch (e) {
-        runShellCommand(`rm -rf "${updateTmpDir}"`, 5000).catch(() => {});
-      }
-
-      console.log(`[Updater] Обновление до ${newInstalledVersion} установлено. Перезапуск веб-сервера...`);
-
-      // 10. Отложенный перезапуск веб-сервера
-      const initScript = '/opt/etc/init.d/S99xkeen-switcher';
-      if (fs.existsSync(initScript)) {
-        const restartCmd = `sh -c "sleep 2 && ${initScript} restart >/dev/null 2>&1 &"`;
-        exec(restartCmd);
-      } else {
-        const nodeBin = process.execPath || process.argv[0] || 'node';
-        const scriptPath = path.join(__dirname, 'server.js');
-        const restartCmd = `sh -c "sleep 2 && kill -9 ${process.pid} && '${nodeBin}' '${scriptPath}' >/dev/null 2>&1 &"`;
-        exec(restartCmd);
-      }
-
-      isUpdatingApp = false;
-      return sendJson(res, 200, {
-        success: true,
-        message: `Обновление до ${newInstalledVersion} успешно установлено! Сервер перезапускается...`,
-        version: newInstalledVersion
+      const body=await parseJsonBody(req);
+      if(!/^[a-f0-9]{40}$/.test(body.sha||'')) throw Error('Сначала проверьте версию обновления.');
+      const initScript='/opt/etc/init.d/S99xkeen-switcher';
+      if(!fs.existsSync(initScript) || !fs.existsSync('/opt/var/run/xkeen-switcher.pid') || fs.readFileSync('/opt/var/run/xkeen-switcher.pid','utf8').trim()!==String(process.pid)) throw Error('Автоустановка требует запуска текущего процесса штатной службой Entware.');
+      const update=await require('./lib/updater').createUpdater({root:__dirname,dataDir:DATA_DIR,repository:updateRepository}).prepare(body.sha);
+      await applyQueue(async()=>{
+        const workerDir=path.join(update.stage,'worker');fs.mkdirSync(workerDir);
+        for(const name of ['operations.js','update-worker.js']) fs.copyFileSync(path.join(__dirname,'lib',name),path.join(workerDir,name));
+        const job={...update,root:__dirname,dataDir:DATA_DIR,initScript,port:server.address().port};
+        const jobPath=path.join(update.stage,'job.json');atomicWrite(jobPath,JSON.stringify(job));
+        atomicWrite(path.join(DATA_DIR,'update-status.json'),JSON.stringify({state:'prepared',version:update.version,stage:update.stage}));
+        const child=spawn(process.execPath,[path.join(workerDir,'update-worker.js'),jobPath],{detached:true,stdio:'ignore',windowsHide:true});
+        await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});child.unref();
       });
-    } catch (err) {
-      console.error('[Updater] Критическая ошибка при обновлении:', err);
-      isUpdatingApp = false;
-      return sendJson(res, 500, { error: `Критический сбой при обновлении: ${err.message}` });
-    }
+      return sendJson(res,202,{success:true,message:'Файлы проверены. Ожидается запуск и проверка новой версии.',version:update.version});
+    } catch(error) {isUpdatingApp=false;return sendJson(res,400,{error:error.message});}
   }
 
   // GET /api/failover - Get current failover status and settings
@@ -2326,6 +2047,9 @@ const server = http.createServer(async (req, res) => {
       const body = await parseJsonBody(req);
       const data = loadData();
 
+      if (body.enabled && (!Array.isArray(body.poolConnectionIds) || !body.poolConnectionIds.length)) return sendJson(res,400,{error:'Выберите резервные подключения.'});
+      if (body.poolConnectionIds?.some(id=>!data.connections.some(c=>c.id===id))) return sendJson(res,400,{error:'Резервное подключение не найдено.'});
+      automationGeneration++;
       data.settings.autoFailover = {
         ...(data.settings.autoFailover || {}),
         enabled: Boolean(body.enabled),
@@ -2372,10 +2096,8 @@ const server = http.createServer(async (req, res) => {
         ? 'Авто-переключение включено'
         : 'Авто-переключение отключено';
 
-      // Auto-populate pool if empty
-      if (!Array.isArray(data.settings.autoFailover.poolConnectionIds) || data.settings.autoFailover.poolConnectionIds.length === 0) {
-        data.settings.autoFailover.poolConnectionIds = data.connections.map(c => c.id);
-      }
+      if (enabled && !data.settings.autoFailover.poolConnectionIds?.length) return sendJson(res,400,{error:'Выберите резервные подключения.'});
+      automationGeneration++;
 
       saveData(data);
       autoFailoverCooldownUntil = Date.now() + 3000;
@@ -2586,40 +2308,7 @@ const server = http.createServer(async (req, res) => {
       let msg = `Маршрутизация для "${conn.name}" изменена на "${targetRouting.name}"`;
       let pingResult = null;
 
-      if (data.settings.activeConnectionId === id) {
-        const { routingPath, restartCommand } = data.settings;
-        writeTargetFile(routingPath, targetRouting.content);
-        if (restartCommand && restartCommand.trim()) {
-          const resCmd = await runShellCommand(restartCommand.trim());
-          const computedStatus = evaluateServiceStatus(resCmd);
-          lastServiceStatus = {
-            status: computedStatus,
-            output: resCmd.stdout,
-            error: resCmd.stderr || resCmd.error || '',
-            code: resCmd.code,
-            timestamp: new Date().toISOString(),
-            command: restartCommand.trim()
-          };
-          msg += ' (Служба XKeen перезапущена)';
-
-          // Test ping of active connection with new routing
-          await sleep(1200);
-          const pr = await measureConnectionHealth(conn, { timeout: 3500 });
-          conn.lastPing = pr.ok ? pr.latency : null;
-          conn.lastPingStatus = pr.ok ? 'ok' : 'unreachable';
-          conn.lastPingError = pr.error || null;
-          conn.lastPingType = pr.checkType || 'tcp';
-          conn.lastPingCheckedAt = new Date().toISOString();
-          pingResult = {
-            ok: pr.ok,
-            ping: conn.lastPing,
-            status: conn.lastPingStatus,
-            checkType: conn.lastPingType,
-            error: conn.lastPingError,
-            latencyStr: pr.ok ? `${conn.lastPing} ms` : 'Недоступен'
-          };
-        }
-      }
+      if (data.settings.activeConnectionId === id) await activateConnectionInternal(id,data,true);
 
       saveData(data);
       return sendJson(res, 200, {
@@ -2953,22 +2642,7 @@ const server = http.createServer(async (req, res) => {
       routing.updatedAt = new Date().toISOString();
 
       const activeConn = data.connections.find(c => c.id === data.settings.activeConnectionId);
-      if (activeConn && activeConn.routingId === id) {
-        const { routingPath, restartCommand } = data.settings;
-        writeTargetFile(routingPath, routing.content);
-        if (restartCommand && restartCommand.trim()) {
-          const resCmd = await runShellCommand(restartCommand.trim());
-          const computedStatus = evaluateServiceStatus(resCmd);
-          lastServiceStatus = {
-            status: computedStatus,
-            output: resCmd.stdout,
-            error: resCmd.stderr || resCmd.error || '',
-            code: resCmd.code,
-            timestamp: new Date().toISOString(),
-            command: restartCommand.trim()
-          };
-        }
-      }
+      if (activeConn && activeConn.routingId === id) await activateConnectionInternal(activeConn.id,data,true);
 
       saveData(data);
       return sendJson(res, 200, { message: 'Конфигурация маршрутизации сохранена', routing });
@@ -3115,6 +2789,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'Не удалось извлечь данные резервной копии из файла. Убедитесь, что загружаемый файл является ZIP-архивом резервной копии или JSON-файлом.' });
       }
 
+      validateIds(restoreData);
       const currentData = loadData();
       let restoredConnections = [];
       let restoredRoutings = [];
@@ -3204,14 +2879,8 @@ const server = http.createServer(async (req, res) => {
         routings: restoredRoutings
       };
 
-      saveData(mergedData);
-
-      // Re-apply active connection files if exists
-      if (mergedData.settings.activeConnectionId) {
-        try {
-          await activateConnectionInternal(mergedData.settings.activeConnectionId, mergedData, true);
-        } catch (e) {}
-      }
+      if (mergedData.settings.activeConnectionId) await activateConnectionInternal(mergedData.settings.activeConnectionId, mergedData, true);
+      else saveData(mergedData);
 
       return sendJson(res, 200, {
         success: true,
@@ -3251,7 +2920,7 @@ const server = http.createServer(async (req, res) => {
   if (urlParts === '/api/service/restart' && req.method === 'POST') {
     const data = loadData();
     const cmd = data.settings.restartCommand || 'xkeen -restart';
-    const result = await runShellCommand(cmd);
+    const result = await applyQueue(()=>runShellCommand(cmd));
     const computedStatus = evaluateServiceStatus(result);
 
     lastServiceStatus = {
@@ -3274,7 +2943,7 @@ const server = http.createServer(async (req, res) => {
   if (urlParts === '/api/service/start' && req.method === 'POST') {
     const data = loadData();
     const cmd = data.settings.startCommand || 'xkeen -start';
-    const result = await runShellCommand(cmd);
+    const result = await applyQueue(()=>runShellCommand(cmd));
     const computedStatus = evaluateServiceStatus(result);
 
     lastServiceStatus = {
@@ -3297,7 +2966,7 @@ const server = http.createServer(async (req, res) => {
   if (urlParts === '/api/service/stop' && req.method === 'POST') {
     const data = loadData();
     const cmd = data.settings.stopCommand || 'xkeen -stop';
-    const result = await runShellCommand(cmd);
+    const result = await applyQueue(()=>runShellCommand(cmd));
     const computedStatus = evaluateServiceStatus(result);
 
     lastServiceStatus = {
@@ -3309,8 +2978,8 @@ const server = http.createServer(async (req, res) => {
       command: cmd
     };
 
-    return sendJson(res, 200, {
-      message: 'Команда остановки службы XKeen выполнена',
+    return sendJson(res, result.success && !result.error ? 200 : 500, {
+      message: result.success && !result.error ? 'Команда остановки службы XKeen выполнена' : 'Ошибка остановки службы XKeen',
       ...lastServiceStatus
     });
   }
@@ -3329,12 +2998,13 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
 
       let portChanged = false;
-      let oldPort = data.settings.port || 3000;
+      let oldPort = server.address()?.port || data.settings.port || 3000;
 
       if (port !== undefined && port !== null && port !== '') {
-        const p = parseInt(port, 10);
-        if (!isNaN(p) && p > 0 && p <= 65535) {
+        const p = Number(port);
+        if (Number.isInteger(p) && p > 0 && p <= 65535) {
           if (oldPort !== p) {
+            await require('./lib/listener').checkPort(p,HOST);
             portChanged = true;
           }
           data.settings.port = p;
@@ -3360,10 +3030,9 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { message, settings: data.settings, portChanged, newPort: data.settings.port });
 
       if (portChanged) {
-        console.log(`[Settings] Panel port changed to ${data.settings.port}. Exiting process for restart...`);
-        setTimeout(() => {
-          process.exit(0);
-        }, 1000);
+        setTimeout(()=>require('./lib/listener').rebind(server,data.settings.port,HOST,oldPort,async()=>{
+          const latest=loadData();latest.settings.port=oldPort;saveData(latest);
+        }).catch(()=>console.error('Не удалось изменить порт; проверьте адрес панели.')),150);
       }
       return;
     } catch (err) {
@@ -3372,6 +3041,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   // --- STATIC FILE SERVER ---
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('Referrer-Policy','no-referrer');
+  res.setHeader('X-Frame-Options','DENY');
   const safePath = path.normalize(urlParts === '/' ? '/index.html' : urlParts).replace(/^(\.\.[\/\\])+/, '');
   let filePath = path.join(PUBLIC_DIR, safePath);
   if (!filePath.startsWith(PUBLIC_DIR)) {
@@ -3395,11 +3067,15 @@ const server = http.createServer(async (req, res) => {
       res.end(content);
     }
   });
-});
+}
+const server = http.createServer((req,res) => { handleRequest(req,res).catch(() => { if (!res.headersSent) sendJson(res,500,{error:'Операция не выполнена. Проверьте базу настроек и журнал службы.'}); else res.end(); }); });
 
+server.requestTimeout=30000;
+server.headersTimeout=10000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 if (require.main === module) server.listen(PORT, HOST, () => {
+  console.log('Ключ доступа к панели находится в ' + access.keyPath);
   console.log(`===================================================`);
   console.log(`🚀 xKeenVlessSwitcher ${appVersion} запущен на http://${HOST}:${PORT}`);
   console.log(`===================================================`);
@@ -3411,4 +3087,4 @@ if (require.main === module) server.listen(PORT, HOST, () => {
     setTimeout(sweepGeoIpForConnections, 2000);
   }
 });
-module.exports = { routingSync, server, loadData, saveData, parseVlessUrl, extractOutboundMetadata, measureConnectionHealth, subscriptions };
+module.exports = { parseZipBuffer, evaluateServiceStatus, routingSync, server, loadData, saveData, parseVlessUrl, extractOutboundMetadata, measureConnectionHealth, subscriptions };

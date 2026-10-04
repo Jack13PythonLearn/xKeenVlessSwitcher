@@ -1,3 +1,4 @@
+require('./auth-client.cjs');
 'use strict';
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
