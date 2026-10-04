@@ -56,27 +56,32 @@ function renderSubscriptions() {
     return `<article class="glass-card subscription-card">
       <div class="subscription-heading"><h3>${escapeHtml(sub.name)}</h3><span class="subscription-status ${sub.lastError ? 'subscription-error' : ''}">${status}</span></div>
       <p class="subscription-source">${escapeHtml(sub.source)}</p>
-      <div class="subscription-metrics"><span><strong>${sub.count || 0}</strong> ${serverNoun(sub.count || 0)}</span><span>${escapeHtml(subscriptionIntervals[sub.intervalHours] || 'Вручную')}</span></div>
+      <div class="subscription-metrics"><span><strong>${sub.count || 0}</strong> ${serverNoun(sub.count || 0)}</span><span>Обновление подписки: ${escapeHtml((subscriptionIntervals[sub.intervalHours] || 'Вручную').toLowerCase())}</span></div>
       ${subscriptionInfoHtml(sub.info)}
       ${stats?.protected ? `<p class="help-text">Сохранено отсутствующих серверов: ${stats.protected}. Они используются или изменены вручную — проверьте их во вкладке «Подключения».</p>` : ''}
       ${stats?.unsupported?.length ? `<p class="help-text">Пропущены протоколы: ${escapeHtml(stats.unsupported.join(', '))}. Отсутствующие серверы сохранены.</p>` : ''}
       ${sub.lastError ? `<p class="subscription-error" role="alert">${escapeHtml(sub.lastError)}</p>` : ''}
       <div class="subscription-actions">
         <button class="btn btn-primary btn-sm" data-sub-action="refresh" data-sub-id="${escapeHtml(sub.id)}" ${busy ? 'disabled' : ''}>${busy ? 'Загрузка…' : 'Обновить'}</button>
-        <button class="btn btn-secondary btn-sm" data-sub-action="edit" data-sub-id="${escapeHtml(sub.id)}" ${busy ? 'disabled' : ''}>Изменить</button>
+        <button class="btn btn-secondary btn-sm" data-sub-action="edit" data-sub-id="${escapeHtml(sub.id)}" ${busy ? 'disabled' : ''}>Редактировать</button>
         <button class="btn btn-danger btn-sm" data-sub-action="delete" data-sub-id="${escapeHtml(sub.id)}" ${busy ? 'disabled' : ''}>Удалить подписку</button>
       </div>
     </article>`;
   }).join('');
 }
 
-function openSubscriptionModal(id) {
+let subscriptionEditRequest = 0;
+async function openSubscriptionModal(id) {
+  const request = ++subscriptionEditRequest;
   const sub = (appData.subscriptions || []).find(x => x.id === id);
   document.getElementById('subscription-form').reset();
   document.getElementById('subscription-id').value = sub?.id || '';
   document.getElementById('subscription-name').value = sub?.name || '';
   document.getElementById('subscription-url').required = !sub;
-  document.getElementById('subscription-url-help').textContent = sub ? 'Оставьте поле пустым, чтобы сохранить текущую ссылку. Новая ссылка применяется при следующем обновлении.' : 'Ссылка хранится на роутере и входит в резервную копию.';
+  document.getElementById('subscription-url').value = '';
+  document.getElementById('subscription-url').disabled = !!sub;
+  document.getElementById('subscription-save').disabled = !!sub;
+  document.getElementById('subscription-url-help').textContent = sub ? 'Текущая ссылка загружается…' : 'Ссылка хранится на роутере и входит в резервную копию.';
   document.getElementById('subscription-interval').value = sub?.intervalHours ?? 24;
   const routing = document.getElementById('subscription-routing');
   routing.innerHTML = appData.routings.map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('');
@@ -86,6 +91,20 @@ function openSubscriptionModal(id) {
   document.getElementById('subscription-form-error').textContent = '';
   openModal('modal-subscription');
   document.getElementById('subscription-name').focus();
+  if (sub) {
+    try {
+      const result = await subscriptionRequest('/' + encodeURIComponent(sub.id), 'GET');
+      if (request !== subscriptionEditRequest || document.getElementById('modal-subscription').classList.contains('hidden')) return;
+      document.getElementById('subscription-url').value = result.url;
+      document.getElementById('subscription-url-help').textContent = 'Новая ссылка применяется при следующем обновлении.';
+    } catch (error) {
+      if (request !== subscriptionEditRequest || document.getElementById('modal-subscription').classList.contains('hidden')) return;
+      document.getElementById('subscription-form-error').textContent = 'Не удалось загрузить текущую ссылку. Закройте форму и повторите попытку.';
+      return;
+    }
+    document.getElementById('subscription-url').disabled = false;
+    document.getElementById('subscription-save').disabled = false;
+  }
 }
 
 async function subscriptionRequest(path, method, body) {

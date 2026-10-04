@@ -9,7 +9,7 @@ vm.runInContext(source.slice(source.indexOf('function getConnectionVlessUrl('), 
 vm.runInContext(source.slice(source.indexOf('function escapeHtml('), source.indexOf('function formatTime(')), scope);
 vm.runInContext(source.slice(source.indexOf('function getFlagEmoji('), source.indexOf('// GITHUB UPDATE CHECK')), scope);
 const subscriptionSource = fs.readFileSync(require.resolve('../public/subscriptions.js'), 'utf8');
-vm.runInContext(subscriptionSource.slice(0, subscriptionSource.indexOf('function openSubscriptionModal(')), scope);
+vm.runInContext(subscriptionSource.slice(0, subscriptionSource.indexOf('let subscriptionEditRequest')), scope);
 
 test('server counts use Russian singular, paucal and plural forms including teens', () => {
   for (const [count, noun] of [[0, 'серверов'], [1, 'сервер'], [2, 'сервера'], [4, 'сервера'], [5, 'серверов'],
@@ -30,6 +30,8 @@ test('subscription status shows the update date and time and hides legacy exclus
   const html = elements.get('subscriptions-list').innerHTML;
   assert.match(html, /Обновлено · 04\.10\.2026, \d{2}:\d{2}:\d{2}/);
   assert.match(html, /<strong>2<\/strong> сервера/);
+  assert.match(html, /Редактировать/);
+  assert.match(html, /Обновление подписки: раз в сутки/);
   assert.ok(!html.includes('Исключено'));
   assert.ok(!html.includes('Вернуть исключённые'));
   assert.equal(scope.subscriptionUpdatedLabel('invalid'), '');
@@ -99,4 +101,29 @@ test('routing list preserves rule order, escapes values and protects merged prof
 test('empty saved failover pool stays empty instead of selecting every server',()=>{
  const part=source.slice(source.indexOf('    const savedPool ='),source.indexOf('    poolContainer.innerHTML ='));
  for(const pool of [[],['one']]){const ctx={af:{poolConnectionIds:pool},conns:[{id:'one'},{id:'two'}]};vm.createContext(ctx);assert.deepEqual(Array.from(vm.runInContext(part+'\nsavedPool',ctx)),pool);}
+});
+
+
+test('subscription editor loads the saved URL and ignores stale requests', async () => {
+  const elements = new Map();
+  const context = {appData:{subscriptions:[{id:'s',name:'Demo'}],routings:[],connections:[],settings:{}}, escapeHtml:x=>x,openModal(){},document:{getElementById(id){
+    if(!elements.has(id)) elements.set(id,{value:'',reset(){},focus(){},classList:{contains(){return false;}}});
+    return elements.get(id);
+  }}};
+  vm.createContext(context);
+  vm.runInContext(subscriptionSource.slice(subscriptionSource.indexOf('let subscriptionEditRequest'), subscriptionSource.indexOf('async function subscriptionRequest')), context);
+  let resolve;
+  context.subscriptionRequest = () => new Promise(r => {resolve=r;});
+  const pending = context.openSubscriptionModal('s');
+  assert.equal(elements.get('subscription-save').disabled,true);
+  resolve({url:'https://example.com/demo'});await pending;
+  assert.equal(elements.get('subscription-url').value,'https://example.com/demo');
+  assert.equal(elements.get('subscription-save').disabled,false);
+  const stale=context.openSubscriptionModal('s');
+  await context.openSubscriptionModal();resolve({url:'https://example.com/old'});await stale;
+  assert.equal(elements.get('subscription-url').value,'');
+  context.subscriptionRequest=async()=>{throw Error('offline');};
+  await context.openSubscriptionModal('s');
+  assert.equal(elements.get('subscription-save').disabled,true);
+  assert.match(elements.get('subscription-form-error').textContent,/Не удалось загрузить/);
 });

@@ -2012,6 +2012,12 @@ const server = http.createServer(async (req, res) => {
       const match = urlParts.match(/^\/api\/subscriptions\/([^/]+)(?:\/(refresh|exclusions))?$/);
       if (match) {
         const [, id, action] = match;
+        if (req.method === 'GET' && !action) {
+          res.setHeader('Cache-Control', 'no-store');
+          const sub = loadData().subscriptions.find(x => x.id === decodeURIComponent(id));
+          if (!sub) return sendJson(res, 404, { error: 'Подписка не найдена' });
+          return sendJson(res, 200, { url: sub.url });
+        }
         if (req.method === 'POST' && action === 'refresh') return sendJson(res, 200, { stats: await subscriptions.refresh(id) });
         if (req.method === 'DELETE' && action === 'exclusions') { subscriptions.resetExclusions(id); return sendJson(res, 200, { message: 'Исключения сброшены. Обновите подписку для возврата серверов.' }); }
         if (req.method === 'PUT' && !action) { subscriptions.edit(id, await parseJsonBody(req)); return sendJson(res, 200, { message: 'Подписка сохранена' }); }

@@ -310,6 +310,13 @@ test('HTTP API redacts URL, deletion does not exclude servers, and backup restor
   try {
     const visible = await (await fetch(base + '/api/data')).json();
     assert.equal(visible.subscriptions[0].url, undefined);
+    const editResponse = await fetch(base + '/api/subscriptions/s');
+    assert.equal(editResponse.headers.get('cache-control'), 'no-store');
+    assert.equal((await editResponse.json()).url, 'https://example.com/private-token');
+    assert.equal((await fetch(base + '/api/subscriptions/missing')).status, 404);
+    const unchanged = await fetch(base + '/api/subscriptions/s', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({url:'https://example.com/private-token'}) });
+    assert.equal(unchanged.status, 200);
+    assert.equal(loadData().subscriptions[0].url, 'https://example.com/private-token');
     assert.equal(visible.connections[0].subscriptionId, 's');
     const remove = await fetch(base + '/api/connections/' + state.connections[0].id, { method: 'DELETE' });
     assert.equal(remove.status, 200);
