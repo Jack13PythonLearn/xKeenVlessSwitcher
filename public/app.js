@@ -70,6 +70,9 @@ document.addEventListener('DOMContentLoaded', () => {
 // Switch Main Navigation Tabs
 function switchMainTab(tab) {
   currentTab = tab;
+  document.getElementById('tab-btn-autofailover').classList.toggle('active', tab === 'autofailover');
+  document.getElementById('section-autofailover').classList.toggle('hidden', tab !== 'autofailover');
+  if (tab === 'autofailover') populateAutoFailoverForm();
   document.getElementById('tab-btn-subscriptions').classList.toggle('active', tab === 'subscriptions');
   document.getElementById('section-subscriptions').classList.toggle('hidden', tab !== 'subscriptions');
   document.getElementById('tab-btn-connections').classList.toggle('active', tab === 'connections');
@@ -104,6 +107,7 @@ async function loadData() {
     renderRoutings();
     renderSubscriptions();
     populateRoutingSelects();
+    if (currentTab === 'autofailover') populateAutoFailoverForm();
     pollFailoverStatus();
     pollAutoFailoverStatus();
   } catch (err) {
@@ -1358,6 +1362,7 @@ function bufferToBase64(buffer) {
 // SETTINGS
 // ==============================================================================
 function switchSettingsTab(tab) {
+  if (tab === 'autofailover') { closeModal('settings-modal'); switchMainTab('autofailover'); return; }
   const isGeneral = (tab === 'general');
   const isAutoFailover = (tab === 'autofailover');
   const isFailover = (tab === 'failover');
@@ -2228,7 +2233,7 @@ async function onAutoFailoverFormSubmit(e) {
     autoFailoverState = data.autoFailover;
     renderAutoFailoverStatus(autoFailoverState);
     showToast(data.message || 'Настройки авто-резерва сохранены', 'success');
-    closeModal('settings-modal');
+    // Keep the auto-switching page open after saving.
   } catch (err) {
     showToast(err.message, 'error');
   } finally {

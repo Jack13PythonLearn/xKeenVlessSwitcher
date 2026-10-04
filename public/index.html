@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=2.1.9">
-  <link rel="stylesheet" href="/flags.css?v=2.1.9">
+  <link rel="stylesheet" href="style.css?v=2.1.10">
+  <link rel="stylesheet" href="/flags.css?v=2.1.10">
 </head>
 <body>
   <div class="app-background"></div>
@@ -58,7 +58,7 @@
         <div>
           <div class="brand-title-row">
             <h1>xKeenVlessSwitcher</h1>
-            <span class="version-tag" id="header-version">v2.1.9</span>
+            <span class="version-tag" id="header-version">v2.1.10</span>
           </div>
           <p class="subtitle">Управление подключениями XKeen на роутерах Keenetic</p>
         </div>
@@ -108,6 +108,7 @@
           <span>Маршрутизация</span>
           <span class="tab-badge" id="routings-count-badge">0</span>
         </button>
+        <button class="nav-tab-btn" id="tab-btn-autofailover" onclick="switchMainTab('autofailover')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7h-9a5 5 0 0 0-5 5v1M16 3l4 4-4 4M4 17h9a5 5 0 0 0 5-5v-1M8 21l-4-4 4-4"/></svg><span>Авто-переключение</span></button>
         <button class="nav-tab-btn" id="tab-btn-subscriptions" onclick="switchMainTab('subscriptions')">
           <span>Подписки</span><span class="tab-badge" id="subscriptions-count-badge">0</span>
         </button>
@@ -181,6 +182,165 @@
       </div>
     </main>
 
+    <main class="content-area hidden" id="section-autofailover"><div class="section-title-row"><h2>Авто-переключение</h2></div><div class="autofailover-page glass-card">
+<form id="autofailover-form" onsubmit="onAutoFailoverFormSubmit(event)">
+          <!-- TOGGLE -->
+          <div class="failover-toggle-card glass-card">
+            <div class="failover-toggle-info">
+              <label class="failover-toggle-title">Автоматический резерв подключений</label>
+              <p class="failover-toggle-desc">При сбое текущего сервера роутер быстро протестирует подключения из пула и переключится на лучшее. При восстановлении исходного сервера — вернется обратно.</p>
+            </div>
+            <label class="custom-switch">
+              <input type="checkbox" id="af-enabled" onchange="onAutoFailoverToggleClick()">
+              <span class="custom-slider"></span>
+            </label>
+          </div>
+
+          <!-- STATUS & METRICS -->
+          <div class="failover-status-card glass-card" id="af-status-panel">
+            <div class="fo-status-row">
+              <span class="fo-status-label">Текущий статус:</span>
+              <span class="fo-state-badge" id="af-state-badge">Ожидание...</span>
+            </div>
+            <div class="fo-status-row">
+              <span class="fo-status-label">Журнал автоматики:</span>
+              <span class="fo-status-log" id="af-status-log">Нет событий</span>
+            </div>
+            <div class="fo-metrics-grid">
+              <div class="fo-metric-item">
+                <span class="fo-metric-label">Последняя проверка</span>
+                <strong id="af-last-check-text">-</strong>
+              </div>
+              <div class="fo-metric-item">
+                <span class="fo-metric-label">Счетчик сбоев</span>
+                <strong id="af-fails-text">0</strong>
+              </div>
+              <div class="fo-metric-item">
+                <span class="fo-metric-label">Счетчик возврата</span>
+                <strong id="af-successes-text">0</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- AUTORESERVE HISTORY / LOG CARD -->
+          <div class="failover-history-card glass-card">
+            <div class="fo-history-header">
+              <div class="fo-history-title-wrap">
+                <span class="fo-history-title">Журнал переключений</span>
+                <span class="fo-history-counter" id="af-history-count">0</span>
+              </div>
+              <div class="fo-history-actions">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="loadAutoFailoverHistoryUI()" title="Обновить список событий">
+                  <span class="fo-refresh-icon">↻</span> Обновить
+                </button>
+                <button type="button" class="btn btn-sm btn-secondary btn-danger-hover" onclick="clearAutoFailoverHistoryUI()" title="Очистить журнал">
+                  🗑️ Очистить
+                </button>
+              </div>
+            </div>
+            <div class="fo-history-list" id="af-history-list">
+              <div class="fo-history-empty">Загрузка журнала...</div>
+            </div>
+          </div>
+
+          <!-- STRATEGY & PRIMARY SELECTION -->
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="af-strategy">Стратегия выбора резерва</label>
+              <select id="af-strategy" class="form-control">
+                <option value="lowest_ping">⚡ Самый быстрый по пингу (рекомендуется)</option>
+                <option value="priority_order">📋 По порядку списка (сверху вниз)</option>
+              </select>
+              <small class="help-text">Как выбирать сервер из пула при отказе основного.</small>
+            </div>
+            <div class="form-group flex-1">
+              <label for="af-primary-mode">Основное подключение</label>
+              <select id="af-primary-mode" class="form-control" onchange="onAutoFailoverPrimaryModeChange()">
+                <option value="manual_active">🎯 Текущее активное (запоминать ручной выбор)</option>
+                <option value="specific_id">📌 Фиксированное из списка</option>
+              </select>
+              <small class="help-text">Какое подключение считать основным для возврата.</small>
+            </div>
+          </div>
+
+          <!-- SPECIFIC PRIMARY SELECT (hidden by default) -->
+          <div class="form-group hidden" id="af-specific-primary-wrap">
+            <label for="af-specific-primary-conn">Выберите фиксированное основное подключение</label>
+            <select id="af-specific-primary-conn" class="form-control">
+              <!-- Populated via JS -->
+            </select>
+          </div>
+
+          <!-- BACKUP POOL CHECKBOXES -->
+          <div class="form-group">
+            <div class="label-row pool-header-label-row">
+              <label style="margin:0;">Пул резервных подключений <span class="req">*</span></label>
+              <div class="field-actions" style="display:flex; gap:8px;">
+                <button type="button" class="btn-text-action" onclick="toggleAllPool(true)">Выбрать все</button>
+                <span style="opacity:0.3;">|</span>
+                <button type="button" class="btn-text-action" onclick="toggleAllPool(false)">Снять все</button>
+              </div>
+            </div>
+            <p class="help-text" style="margin-bottom:8px;">Отметьте подключения, на которые разрешено переключаться. Снимите галочки со специальных БС-профилей или лимитных серверов.</p>
+            <div class="pool-connections-list" id="af-pool-container">
+              <!-- Populated via JS -->
+            </div>
+          </div>
+
+          <!-- AUTO RETURN TOGGLE -->
+          <div class="failover-toggle-card glass-card" style="margin-top:12px;">
+            <div class="failover-toggle-info">
+              <label class="failover-toggle-title" style="font-size:0.92rem;">Автовозврат на основное подключение (Fallback)</label>
+              <p class="failover-toggle-desc">Когда основной сервер восстановится, роутер автоматически переключится обратно на него.</p>
+            </div>
+            <label class="custom-switch">
+              <input type="checkbox" id="af-auto-return" checked>
+              <span class="custom-slider"></span>
+            </label>
+          </div>
+
+          <!-- ADVANCED ACCORDION -->
+          <details class="failover-advanced-details">
+            <summary>Расширенные параметры проверок и порогов</summary>
+            <div class="failover-advanced-body">
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="af-interval">Интервал проверки (сек)</label>
+                  <input type="number" id="af-interval" min="10" max="300" value="20" placeholder="20">
+                  <small class="help-text">Частота проверок активного соединения (мин. 10 сек).</small>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="af-fail-threshold">Порог сбоя (ошибок подряд)</label>
+                  <input type="number" id="af-fail-threshold" min="1" max="10" value="3" placeholder="3">
+                  <small class="help-text">Число сбоев подряд до переключения на резерв.</small>
+                </div>
+                <div class="form-group flex-1">
+                  <label for="af-recovery-threshold">Порог возврата (успехов подряд)</label>
+                  <input type="number" id="af-recovery-threshold" min="1" max="10" value="3" placeholder="3">
+                  <small class="help-text">Число успешных откликов подряд для возврата на основной.</small>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="af-canary-url">URL проверки внешнего интернета (Canary)</label>
+                  <input type="url" id="af-canary-url" value="http://cp.cloudflare.com/generate_204" placeholder="http://cp.cloudflare.com/generate_204">
+                  <small class="help-text">Быстрый HTTP 204 ресурс для проверки доступности канала.</small>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="populateAutoFailoverForm()">Сбросить изменения</button>
+            <button type="submit" class="btn btn-primary" id="btn-save-autofailover">Сохранить настройки резерва</button>
+          </div>
+        </form>
+</div></main>
+
     <main class="content-area hidden" id="section-subscriptions">
       <div class="section-title-row">
         <div><h2>Подписки</h2><p class="subscription-intro">Серверы по ссылке — с обновлением по расписанию.</p></div>
@@ -198,7 +358,7 @@
     <footer class="bottom-bar glass-card footer-centered">
       <div class="footer-content">
         <div class="app-version-badge" id="app-version-badge" title="Версия приложения">
-          <span id="app-version-text">v2.1.9</span>
+          <span id="app-version-text">v2.1.10</span>
         </div>
         <div id="app-update-group" class="app-update-group hidden">
           <a id="app-update-badge" class="app-update-badge" href="https://github.com/Jack13PythonLearn/xKeenVlessSwitcher/releases" target="_blank" rel="noopener noreferrer" title="Нажмите, чтобы открыть страницу релиза на GitHub">
@@ -588,10 +748,6 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
           <span>Пути и команды</span>
         </button>
-        <button type="button" class="settings-tab-btn" id="tab-btn-settings-autofailover" onclick="switchSettingsTab('autofailover')">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-          <span>Авто-переключение</span>
-        </button>
         <button type="button" class="settings-tab-btn" id="tab-btn-settings-failover" onclick="switchSettingsTab('failover')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <span>Белые Списки</span>
@@ -691,165 +847,6 @@
       </div>
 
       <!-- TAB: AUTO-FAILOVER (АВТОРЕЗЕРВ ПОДКЛЮЧЕНИЙ) -->
-      <div id="settings-tab-content-autofailover" class="hidden">
-        <form id="autofailover-form" onsubmit="onAutoFailoverFormSubmit(event)">
-          <!-- TOGGLE -->
-          <div class="failover-toggle-card glass-card">
-            <div class="failover-toggle-info">
-              <label class="failover-toggle-title">Автоматический резерв подключений</label>
-              <p class="failover-toggle-desc">При сбое текущего сервера роутер быстро протестирует подключения из пула и переключится на лучшее. При восстановлении исходного сервера — вернется обратно.</p>
-            </div>
-            <label class="custom-switch">
-              <input type="checkbox" id="af-enabled" onchange="onAutoFailoverToggleClick()">
-              <span class="custom-slider"></span>
-            </label>
-          </div>
-
-          <!-- STATUS & METRICS -->
-          <div class="failover-status-card glass-card" id="af-status-panel">
-            <div class="fo-status-row">
-              <span class="fo-status-label">Текущий статус:</span>
-              <span class="fo-state-badge" id="af-state-badge">Ожидание...</span>
-            </div>
-            <div class="fo-status-row">
-              <span class="fo-status-label">Журнал автоматики:</span>
-              <span class="fo-status-log" id="af-status-log">Нет событий</span>
-            </div>
-            <div class="fo-metrics-grid">
-              <div class="fo-metric-item">
-                <span class="fo-metric-label">Последняя проверка</span>
-                <strong id="af-last-check-text">-</strong>
-              </div>
-              <div class="fo-metric-item">
-                <span class="fo-metric-label">Счетчик сбоев</span>
-                <strong id="af-fails-text">0</strong>
-              </div>
-              <div class="fo-metric-item">
-                <span class="fo-metric-label">Счетчик возврата</span>
-                <strong id="af-successes-text">0</strong>
-              </div>
-            </div>
-          </div>
-
-          <!-- AUTORESERVE HISTORY / LOG CARD -->
-          <div class="failover-history-card glass-card">
-            <div class="fo-history-header">
-              <div class="fo-history-title-wrap">
-                <span class="fo-history-title">Журнал переключений</span>
-                <span class="fo-history-counter" id="af-history-count">0</span>
-              </div>
-              <div class="fo-history-actions">
-                <button type="button" class="btn btn-sm btn-secondary" onclick="loadAutoFailoverHistoryUI()" title="Обновить список событий">
-                  <span class="fo-refresh-icon">↻</span> Обновить
-                </button>
-                <button type="button" class="btn btn-sm btn-secondary btn-danger-hover" onclick="clearAutoFailoverHistoryUI()" title="Очистить журнал">
-                  🗑️ Очистить
-                </button>
-              </div>
-            </div>
-            <div class="fo-history-list" id="af-history-list">
-              <div class="fo-history-empty">Загрузка журнала...</div>
-            </div>
-          </div>
-
-          <!-- STRATEGY & PRIMARY SELECTION -->
-          <div class="form-row">
-            <div class="form-group flex-1">
-              <label for="af-strategy">Стратегия выбора резерва</label>
-              <select id="af-strategy" class="form-control">
-                <option value="lowest_ping">⚡ Самый быстрый по пингу (рекомендуется)</option>
-                <option value="priority_order">📋 По порядку списка (сверху вниз)</option>
-              </select>
-              <small class="help-text">Как выбирать сервер из пула при отказе основного.</small>
-            </div>
-            <div class="form-group flex-1">
-              <label for="af-primary-mode">Основное подключение</label>
-              <select id="af-primary-mode" class="form-control" onchange="onAutoFailoverPrimaryModeChange()">
-                <option value="manual_active">🎯 Текущее активное (запоминать ручной выбор)</option>
-                <option value="specific_id">📌 Фиксированное из списка</option>
-              </select>
-              <small class="help-text">Какое подключение считать основным для возврата.</small>
-            </div>
-          </div>
-
-          <!-- SPECIFIC PRIMARY SELECT (hidden by default) -->
-          <div class="form-group hidden" id="af-specific-primary-wrap">
-            <label for="af-specific-primary-conn">Выберите фиксированное основное подключение</label>
-            <select id="af-specific-primary-conn" class="form-control">
-              <!-- Populated via JS -->
-            </select>
-          </div>
-
-          <!-- BACKUP POOL CHECKBOXES -->
-          <div class="form-group">
-            <div class="label-row pool-header-label-row">
-              <label style="margin:0;">Пул резервных подключений <span class="req">*</span></label>
-              <div class="field-actions" style="display:flex; gap:8px;">
-                <button type="button" class="btn-text-action" onclick="toggleAllPool(true)">Выбрать все</button>
-                <span style="opacity:0.3;">|</span>
-                <button type="button" class="btn-text-action" onclick="toggleAllPool(false)">Снять все</button>
-              </div>
-            </div>
-            <p class="help-text" style="margin-bottom:8px;">Отметьте подключения, на которые разрешено переключаться. Снимите галочки со специальных БС-профилей или лимитных серверов.</p>
-            <div class="pool-connections-list" id="af-pool-container">
-              <!-- Populated via JS -->
-            </div>
-          </div>
-
-          <!-- AUTO RETURN TOGGLE -->
-          <div class="failover-toggle-card glass-card" style="margin-top:12px;">
-            <div class="failover-toggle-info">
-              <label class="failover-toggle-title" style="font-size:0.92rem;">Автовозврат на основное подключение (Fallback)</label>
-              <p class="failover-toggle-desc">Когда основной сервер восстановится, роутер автоматически переключится обратно на него.</p>
-            </div>
-            <label class="custom-switch">
-              <input type="checkbox" id="af-auto-return" checked>
-              <span class="custom-slider"></span>
-            </label>
-          </div>
-
-          <!-- ADVANCED ACCORDION -->
-          <details class="failover-advanced-details">
-            <summary>Расширенные параметры проверок и порогов</summary>
-            <div class="failover-advanced-body">
-              <div class="form-row">
-                <div class="form-group flex-1">
-                  <label for="af-interval">Интервал проверки (сек)</label>
-                  <input type="number" id="af-interval" min="10" max="300" value="20" placeholder="20">
-                  <small class="help-text">Частота проверок активного соединения (мин. 10 сек).</small>
-                </div>
-              </div>
-
-              <div class="form-row">
-                <div class="form-group flex-1">
-                  <label for="af-fail-threshold">Порог сбоя (ошибок подряд)</label>
-                  <input type="number" id="af-fail-threshold" min="1" max="10" value="3" placeholder="3">
-                  <small class="help-text">Число сбоев подряд до переключения на резерв.</small>
-                </div>
-                <div class="form-group flex-1">
-                  <label for="af-recovery-threshold">Порог возврата (успехов подряд)</label>
-                  <input type="number" id="af-recovery-threshold" min="1" max="10" value="3" placeholder="3">
-                  <small class="help-text">Число успешных откликов подряд для возврата на основной.</small>
-                </div>
-              </div>
-
-              <div class="form-row">
-                <div class="form-group flex-1">
-                  <label for="af-canary-url">URL проверки внешнего интернета (Canary)</label>
-                  <input type="url" id="af-canary-url" value="http://cp.cloudflare.com/generate_204" placeholder="http://cp.cloudflare.com/generate_204">
-                  <small class="help-text">Быстрый HTTP 204 ресурс для проверки доступности канала.</small>
-                </div>
-              </div>
-            </div>
-          </details>
-
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" onclick="closeModal('settings-modal')">Отмена</button>
-            <button type="submit" class="btn btn-primary" id="btn-save-autofailover">Сохранить настройки резерва</button>
-          </div>
-        </form>
-      </div>
-
       <!-- TAB 3: FAILOVER (БЕЛЫЕ СПИСКИ) -->
       <div id="settings-tab-content-failover" class="hidden">
         <form id="failover-form" onsubmit="onFailoverFormSubmit(event)">
@@ -1103,7 +1100,7 @@
   <div id="toast-container"></div>
 
   <script src="qrcode.min.js"></script>
-  <script src="app.js?v=2.1.9"></script>
-  <script src="subscriptions.js?v=2.1.9"></script>
+  <script src="app.js?v=2.1.10"></script>
+  <script src="subscriptions.js?v=2.1.10"></script>
 </body>
 </html>

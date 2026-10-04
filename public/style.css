@@ -3588,3 +3588,7 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="url"]:focus, i
 .routing-sync-error { color:#fca5a5; }
 
 @media(max-width:720px) { .main-tabs { flex-wrap:wrap; } .tabs-group { min-width:0; flex:1 1 100%; overflow-x:auto; max-width:100%; } .nav-tab-btn { flex:0 0 auto; } .tab-extra-actions { margin-left:auto; } }
+
+.autofailover-page { padding:24px; border-radius:16px; }
+#section-autofailover .modal-footer { margin-bottom:0; }
+@media(max-width:720px) { .autofailover-page { padding:14px; } }
