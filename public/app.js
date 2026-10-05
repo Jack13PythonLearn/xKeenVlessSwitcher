@@ -89,7 +89,7 @@ let dataLoadSequence = 0;
 async function loadData() {
   const sequence = ++dataLoadSequence;
   try {
-    const res = await fetch('/api/data', { cache: 'no-store' });
+    const res = await fetch('/api/data?compact=1', { cache: 'no-store' });
     if (!res.ok) throw new Error(`Ошибка загрузки данных (${res.status})`);
     const data = await res.json();
     if (sequence !== dataLoadSequence) return;
@@ -237,6 +237,13 @@ function toggleConnectionDetails(id) {
   const row = document.getElementById('card-conn-' + id);
   if (!row) return;
   const details = row.querySelector('.conn-details');
+  if (details.hidden && !details.innerHTML.trim()) {
+    expandedConnections.add(id);
+    const conn=appData.connections.find(c=>c.id===id);
+    const template=document.createElement('template');
+    template.innerHTML=connectionRowHtml(conn,appData.settings.activeConnectionId);
+    details.innerHTML=template.content.querySelector('.conn-details').innerHTML;
+  }
   details.hidden = !details.hidden;
   row.querySelector('.conn-details-toggle').setAttribute('aria-expanded', String(!details.hidden));
   if (details.hidden) expandedConnections.delete(id); else expandedConnections.add(id);
@@ -357,7 +364,7 @@ function connectionRowHtml(conn, activeId) {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             </button><button class="btn btn-secondary btn-sm btn-icon conn-details-toggle" onclick="toggleConnectionDetails('${conn.id}')" aria-expanded="${detailsOpen}" aria-controls="connection-details-${conn.id}" title="Параметры и маршрутизация" aria-label="Параметры и маршрутизация"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button></div>
       <div class="conn-details" id="connection-details-${conn.id}" ${detailsOpen ? '' : 'hidden'}>
-          <div class="conn-badges-row">
+${detailsOpen ? `          <div class="conn-badges-row">
             <span class="conn-badge badge-host" title="Хост:Порт">${escapeHtml(conn.serverAddress || '-')}:${conn.serverPort || '-'}</span>
             <span class="conn-badge badge-proto" title="Протокол">${conn.protocol === 'hysteria' ? 'HYSTERIA2' : escapeHtml((conn.protocol || 'vless').toUpperCase())}</span>
             ${netBadgeHtml}
@@ -376,7 +383,7 @@ function connectionRowHtml(conn, activeId) {
           </div>
 
 
-        ${conn.description ? `<div class="conn-comment">${escapeHtml(conn.description)}</div>` : ''}
+        ${conn.description ? `<div class="conn-comment">${escapeHtml(conn.description)}</div>` : ''}` : ''}
       </div>
       ${conn.subscriptionMissing ? '<p class="connection-missing">Сервер исчез из подписки; сохранён для проверки.</p>' : ''}
     </article>`;
@@ -715,8 +722,8 @@ async function onAddConnectionSubmit(e) {
 }
 
 // Open Edit Connection Modal
-function openEditConnectionModal(id) {
-  const conn = appData.connections.find(c => c.id === id);
+async function openEditConnectionModal(id) {
+  const conn = await connectionDetails(id);
   if (!conn) return;
 
   document.getElementById('edit-conn-id').value = conn.id;
@@ -951,9 +958,20 @@ function getConnectionVlessUrl(conn) {
   }
 }
 
+let detailsRequest = 0;
+async function connectionDetails(id) {
+  const request = ++detailsRequest;
+  try {
+    const res = await fetch('/api/connections/' + encodeURIComponent(id));
+    const conn = await res.json();
+    if (!res.ok) throw Error(conn.error || 'Не удалось загрузить подключение');
+    return request === detailsRequest ? conn : null;
+  } catch (e) { if(request === detailsRequest) showToast(e.message,'error'); return null; }
+}
+
 // Open QR Code Modal for Connection
-function openQrModal(id) {
-  const conn = (appData.connections || []).find(c => c.id === id);
+async function openQrModal(id) {
+  const conn = await connectionDetails(id);
   if (!conn) return;
 
   const url = getConnectionVlessUrl(conn);
@@ -1019,7 +1037,7 @@ function copyQrUrl() {
 // Check single connection ping
 async function checkConnectionPing(id, { quiet = false } = {}) {
   if (pingingConnectionIds.has(id) || isPingingAll) return;
-  const checkedContent = appData.connections.find(c => c.id === id)?.outboundContent;
+  const checkedContent = appData.connections.find(c => c.id === id)?.outboundRevision || appData.connections.find(c => c.id === id)?.outboundContent;
   pingingConnectionIds.add(id);
   updateConnectionRow(id);
 
@@ -1031,7 +1049,7 @@ async function checkConnectionPing(id, { quiet = false } = {}) {
     if (!res.ok) throw new Error(data.error || 'Ошибка проверки');
 
     const conn = appData.connections.find(c => c.id === id);
-    if (!conn || conn.outboundContent !== checkedContent) return;
+    if (!conn || (conn.outboundRevision || conn.outboundContent) !== checkedContent) return;
     if (conn) {
       conn.lastPing = data.ping;
       conn.lastPingStatus = data.status;
@@ -1095,7 +1113,7 @@ async function checkAllPing() {
       const conn = list[i];
       if (btnText) btnText.innerHTML = `<span class="spin-icon">⏳</span> Проверка ${i + 1}/${list.length}...`;
       pingingConnectionIds.add(conn.id);
-      renderConnections();
+      updateConnectionRow(conn.id);
 
       try {
         const res = await fetch(`/api/connections/${conn.id}/ping`, { method: 'POST' });
@@ -1124,7 +1142,7 @@ async function checkAllPing() {
       } finally {
         checked++;
         pingingConnectionIds.delete(conn.id);
-        renderConnections();
+        updateConnectionRow(conn.id);
       }
     }
 
@@ -1138,7 +1156,7 @@ async function checkAllPing() {
     pingingConnectionIds.clear();
     if (btn) btn.disabled = false;
     if (btnText) btnText.textContent = 'Проверить все';
-    renderConnections();
+    reorderConnectionRows();
   }
 }
 
@@ -1307,17 +1325,27 @@ function updateServiceStatusUI(data) {
   }
 }
 
-function startServicePolling() {
-  pollServiceStatus();
-  pollFailoverStatus();
-  pollAutoFailoverStatus();
-  if (servicePollingTimer) clearInterval(servicePollingTimer);
-  servicePollingTimer = setInterval(() => {
-    pollServiceStatus();
-    pollFailoverStatus();
-    pollAutoFailoverStatus();
-  }, 8000);
+let statusPollingBusy = false;
+async function pollCombinedStatus() {
+  if (document.hidden || statusPollingBusy) return;
+  statusPollingBusy = true;
+  try {
+    const res = await fetch('/api/status');
+    if (!res.ok) return;
+    const data = await res.json();
+    updateServiceStatusUI(data.service);
+    failoverState = data.failover || {};
+    renderFailoverStatus(failoverState);
+    autoFailoverState = data.autoFailover || {};
+    renderAutoFailoverStatus(autoFailoverState);
+  } catch {} finally { statusPollingBusy = false; }
 }
+function startServicePolling() {
+  pollCombinedStatus();
+  if (servicePollingTimer) clearInterval(servicePollingTimer);
+  servicePollingTimer = setInterval(pollCombinedStatus, 8000);
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden) pollCombinedStatus();});
 
 async function controlService(action) {
   const btn = document.getElementById(`btn-service-${action}`);

@@ -11,7 +11,7 @@ function harness(fetch) {
     isPingingAll: false, stopPingRequested: false, pingingConnectionIds: new Set(),
     appData: { connections: [{id:'a'}, {id:'b'}, {id:'c'}] }, fetch,
     document: {getElementById(id) {if (!elements.has(id)) elements.set(id, {}); return elements.get(id);}},
-    renderConnections() {}, showToast(message, type) {messages.push({message, type});}
+    renderConnections() {}, updateConnectionRow(){}, reorderConnectionRows(){}, showToast(message, type) {messages.push({message, type});}
   };
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('function stopAllPing()'), source.indexOf('// ==============================================================================\n// ROUTING', source.indexOf('function stopAllPing()'))), context);

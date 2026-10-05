@@ -66,3 +66,15 @@ test('stopped status after restart is still a failure and preserves the previous
   assert.equal(app.loadData().settings.autoFailover.preferredPrimaryId,'old');
   assert.equal(fs.readFileSync(data.settings.outboundPath,'utf8'),'old-outbound');
 });
+test('compact API omits outbound for 1000 servers; details and full backup API remain complete',async()=>{
+  const data=fixture();data.connections=Array.from({length:1000},(_,i)=>({...data.connections[1],id:'test_'+i,outboundContent:JSON.stringify({outbounds:[],description:'x'.repeat(1500)})}));app.saveData(data);
+  const full=await (await fetch(base+'/api/data')).text();const compact=await(await fetch(base+'/api/data?compact=1')).text();
+  assert.ok(compact.length<full.length/2);const list=JSON.parse(compact).connections;assert.equal(list.length,1000);assert.equal(list[0].outboundContent,undefined);assert.equal(list[0].outboundRevision.length,64);
+  const detail=await(await fetch(base+'/api/connections/test_0')).json();assert.equal(detail.outboundContent,data.connections[0].outboundContent);
+});
+test('single ping updates health without rewriting profiles or last-good backup',async()=>{
+  fixture();const file=path.join(temp,'profiles.json'),before=fs.readFileSync(file),last=fs.readFileSync(file+'.last-good');
+  const res=await fetch(base+'/api/connections/new/ping',{method:'POST'});assert.equal(res.status,200);
+  assert.deepEqual(fs.readFileSync(file),before);assert.deepEqual(fs.readFileSync(file+'.last-good'),last);
+  assert.ok(app.loadData().connections.find(c=>c.id==='new').lastPingCheckedAt);
+});

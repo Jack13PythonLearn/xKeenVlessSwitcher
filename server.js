@@ -24,6 +24,9 @@ const DATA_FILE = path.join(DATA_DIR, 'profiles.json');
 const FAILOVER_LOG_FILE = path.join(DATA_DIR, 'failover_history.json');
 const AUTOFAILOVER_LOG_FILE = path.join(DATA_DIR, 'autofailover_history.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const healthStore=require('./lib/health-store').createHealthStore(path.join(DATA_DIR,'health.json'));
+process.once('exit',()=>{try {healthStore.flush();}catch {}});
+if(require.main===module) process.once('SIGTERM',()=>{try {healthStore.flush();}finally {process.exit(0);}});
 
 let isUpdatingApp = false;
 const {trustedOrigin} = require('./lib/request-origin');
@@ -1395,7 +1398,7 @@ function loadDataRaw() {
 
 // Save data to file
 function loadData() {
-  const data = loadDataRaw();
+  const data = healthStore.overlay(loadDataRaw());
   dataSnapshots.set(data, structuredClone(data));
   return data;
 }
@@ -1404,10 +1407,14 @@ function saveData(data) {
   try {
     validateIds(data);
     const base = dataSnapshots.get(data);
-    const next = base ? mergeChanges(base, data, loadDataRaw()) : data;
+    const next = base ? mergeChanges(base, data, healthStore.overlay(loadDataRaw())) : data;
     validateIds(next);
     if(fs.existsSync(DATA_FILE)) {loadDataRaw();atomicWrite(DATA_FILE+'.last-good',fs.readFileSync(DATA_FILE));}
-    atomicWrite(DATA_FILE, JSON.stringify(next, null, 2));
+    const persistent=structuredClone(next);
+    for(const conn of persistent.connections) for(const key of ['lastPing','lastPingStatus','lastPingError','lastPingType','lastPingCheckedAt']) delete conn[key];
+    atomicWrite(DATA_FILE, JSON.stringify(persistent));
+    for(const conn of next.connections) healthStore.set(conn);
+    healthStore.prune(next.connections);
     // Track this request's own state; unrelated concurrent additions remain in the file.
     dataSnapshots.set(data, structuredClone(data));
     return true;
@@ -1760,6 +1767,7 @@ const MIME_TYPES = {
   '.ttf': 'font/ttf',
   '.otf': 'font/otf'
 };
+const serveStatic=require('./lib/static-files').createStaticHandler(PUBLIC_DIR,appVersion,MIME_TYPES);
 
 // Helper: send JSON response
 function sendJson(res, statusCode, data) {
@@ -1826,7 +1834,16 @@ async function handleRequest(req, res) {
   // GET /api/data
   if (urlParts === '/api/data' && req.method === 'GET') {
     const data = loadData();
+    if(new URL(req.url,'http://localhost').searchParams.get('compact')==='1') data.connections=data.connections.map(({outboundContent,...conn})=>({...conn,outboundRevision:require('./lib/health-store').fingerprint({outboundContent})}));
     return sendJson(res, 200, { ...data, routingSources, routingSourceLists, subscriptions: data.subscriptions.map(x => publicSubscription(x, data.connections)), version: appVersion, updateRepository });
+  }
+  if(req.method==='GET' && /^\/api\/connections\/[\w-]+$/.test(urlParts)) {
+    const conn=loadData().connections.find(c=>c.id===urlParts.split('/').pop());
+    return sendJson(res,conn?200:404,conn||{error:'Подключение не найдено'});
+  }
+  if(req.method==='GET' && urlParts==='/api/app/storage') {
+    const storage=require('./lib/storage');
+    return sendJson(res,200,{runtimeBytes:storage.bytes(PUBLIC_DIR)+storage.bytes(path.join(__dirname,'lib'))+storage.bytes(__filename)+storage.bytes(path.join(__dirname,'package.json')),dataBytes:storage.bytes(DATA_DIR),freeBytes:storage.available(DATA_DIR),memory:process.memoryUsage()});
   }
 
   // Check pinned source versions before downloading and replacing managed domains.
@@ -1881,7 +1898,7 @@ async function handleRequest(req, res) {
       const update=await require('./lib/updater').createUpdater({root:__dirname,dataDir:DATA_DIR,repository:updateRepository}).prepare(body.sha);
       await applyQueue(async()=>{
         const workerDir=path.join(update.stage,'worker');fs.mkdirSync(workerDir);
-        for(const name of ['operations.js','update-worker.js']) fs.copyFileSync(path.join(__dirname,'lib',name),path.join(workerDir,name));
+        for(const name of ['operations.js','storage.js','update-worker.js']) fs.copyFileSync(path.join(__dirname,'lib',name),path.join(workerDir,name));
         const job={...update,root:__dirname,dataDir:DATA_DIR,initScript,port:server.address().port};
         const jobPath=path.join(update.stage,'job.json');atomicWrite(jobPath,JSON.stringify(job));
         atomicWrite(path.join(DATA_DIR,'update-status.json'),JSON.stringify({state:'prepared',version:update.version,stage:update.stage}));
@@ -2459,7 +2476,7 @@ async function handleRequest(req, res) {
         } catch (e) {}
       }
 
-      saveData(data);
+      healthStore.set(conn);
 
       return sendJson(res, 200, {
         id: conn.id,
@@ -2519,7 +2536,7 @@ async function handleRequest(req, res) {
         });
       }
 
-      saveData(data);
+      for(const conn of data.connections) healthStore.set(conn);
 
       return sendJson(res, 200, {
         results,
@@ -2876,7 +2893,7 @@ async function handleRequest(req, res) {
   // --- SERVICE CONTROL ROUTES ---
 
   // GET /api/service/status
-  if (urlParts === '/api/service/status' && req.method === 'GET') {
+  if (['/api/service/status','/api/status'].includes(urlParts) && req.method === 'GET') {
     const data = loadData();
     const cmd = data.settings.statusCommand || 'xkeen -status';
     const result = await runShellCommand(cmd);
@@ -2890,7 +2907,7 @@ async function handleRequest(req, res) {
       timestamp: new Date().toISOString(),
       command: cmd
     };
-    return sendJson(res, 200, lastServiceStatus);
+    return sendJson(res, 200, urlParts==='/api/status'?{service:lastServiceStatus,failover:data.settings.failover,autoFailover:data.settings.autoFailover}:lastServiceStatus);
   }
 
   // POST /api/service/restart
@@ -3021,29 +3038,7 @@ async function handleRequest(req, res) {
   res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('Referrer-Policy','no-referrer');
   res.setHeader('X-Frame-Options','DENY');
-  const safePath = path.normalize(urlParts === '/' ? '/index.html' : urlParts).replace(/^(\.\.[\/\\])+/, '');
-  let filePath = path.join(PUBLIC_DIR, safePath);
-  if (!filePath.startsWith(PUBLIC_DIR)) {
-    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end('403 Forbidden');
-  }
-  const ext = path.extname(filePath).toLowerCase();
-  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-
-  fs.readFile(filePath, (err, content) => {
-    if (err) {
-      if (err.code === 'ENOENT') {
-        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('404 Not Found');
-      } else {
-        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('500 Internal Server Error');
-      }
-    } else {
-        res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-store' });
-      res.end(content);
-    }
-  });
+  return serveStatic(req,res);
 }
 const server = http.createServer((req,res) => { handleRequest(req,res).catch(() => { if (!res.headersSent) sendJson(res,500,{error:'Операция не выполнена. Проверьте базу настроек и журнал службы.'}); else res.end(); }); });
 
@@ -3061,6 +3056,20 @@ if (require.main === module) server.listen(PORT, HOST, () => {
     subscriptions.start();
     routingSync.start();
     setTimeout(sweepGeoIpForConnections, 2000);
+    // Only the installed Entware service performs housekeeping, never a development checkout.
+    if(__dirname==='/opt/etc/xkeen-switcher') {
+      const maintain=()=>{
+        try {
+          const storage=require('./lib/storage');
+          storage.cleanupStages(DATA_DIR);
+          const state=JSON.parse(fs.readFileSync(path.join(DATA_DIR,'update-status.json'),'utf8'));
+          if(['complete','rolled_back'].includes(state.state)) storage.cleanupLegacy(__dirname);
+        } catch {}
+        try {require('./lib/storage').trimLog('/opt/var/log/xkeen-switcher.log');} catch {}
+      };
+      setTimeout(maintain,30000).unref();
+      setInterval(maintain,60000).unref();
+    }
   }
 });
 module.exports = { parseZipBuffer, evaluateServiceStatus, routingSync, server, loadData, saveData, parseVlessUrl, extractOutboundMetadata, measureConnectionHealth, subscriptions };

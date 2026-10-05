@@ -125,49 +125,18 @@ mkdir -p "$INSTALL_DIR"
 mkdir -p "/opt/var/run"
 mkdir -p "/opt/var/log"
 
-ARCHIVE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/${REPO_BRANCH}.tar.gz"
-
-DOWNLOAD_SUCCESS=0
-
-# Пробуем скачать публичный архив или используем GITHUB_TOKEN при наличии
-if [ -n "$GITHUB_TOKEN" ]; then
-  echo -e "  Используется переданный токен GitHub..."
-  if curl -sL -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/tarball/${REPO_BRANCH}" -o "$TMP_DIR/app.tar.gz"; then
-    DOWNLOAD_SUCCESS=1
-  fi
-fi
-
-if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
-  if curl -sL "$ARCHIVE_URL" -o "$TMP_DIR/app.tar.gz" && [ -s "$TMP_DIR/app.tar.gz" ]; then
-    if tar -tzf "$TMP_DIR/app.tar.gz" >/dev/null 2>&1; then
-      DOWNLOAD_SUCCESS=1
-    fi
-  fi
-fi
-
-if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
-  echo -e "${YELLOW}[!] Репозиторий приватный или архив не скачался напрямую.${NC}"
-  INPUT_TOKEN=""
-  if [ -r /dev/tty ]; then
-    printf "Пожалуйста, введите ваш Personal Access Token (GitHub Token) или нажмите Enter для отмены: " > /dev/tty
-    read -r INPUT_TOKEN < /dev/tty
-  else
-    printf "Пожалуйста, введите ваш Personal Access Token (GitHub Token) или нажмите Enter для отмены: "
-    read -r INPUT_TOKEN
-  fi
-
-  if [ -n "$INPUT_TOKEN" ]; then
-    if curl -sL -H "Authorization: token $INPUT_TOKEN" "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/tarball/${REPO_BRANCH}" -o "$TMP_DIR/app.tar.gz"; then
-      DOWNLOAD_SUCCESS=1
-    fi
-  fi
-fi
-
-if [ "$DOWNLOAD_SUCCESS" -eq 0 ] || [ ! -s "$TMP_DIR/app.tar.gz" ]; then
-  echo -e "${RED}[ОШИБКА] Не удалось скачать архив проекта с GitHub.${NC}"
-  rm -rf "$TMP_DIR"
-  exit 1
-fi
+RUNTIME_URL="https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/dist"
+trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
+curl -fLsS "$RUNTIME_URL/runtime-size.txt" -o "$TMP_DIR/runtime-size.txt"
+RUNTIME_BYTES=$(cat "$TMP_DIR/runtime-size.txt")
+case "$RUNTIME_BYTES" in ''|*[!0-9]*) echo "Некорректный размер пакета"; exit 1;; esac
+[ "$RUNTIME_BYTES" -le 33554432 ] || { echo "Пакет слишком большой"; exit 1; }
+FREE_KB=$(df -Pk /opt | awk 'NR==2 {print $4}')
+NEEDED_KB=$((RUNTIME_BYTES * 3 / 1024 + 2048))
+[ "$FREE_KB" -ge "$NEEDED_KB" ] || { echo "Недостаточно места: нужно $NEEDED_KB КБ"; exit 1; }
+curl -fLsS "$RUNTIME_URL/runtime.tar.gz" -o "$TMP_DIR/app.tar.gz"
+curl -fLsS "$RUNTIME_URL/runtime.sha256" -o "$TMP_DIR/runtime.sha256"
+node -e 'const fs=require("fs"),c=require("crypto");const hash=c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex");if(hash!==fs.readFileSync(process.argv[2],"utf8").trim())throw Error("Контрольная сумма пакета не совпадает");' "$TMP_DIR/app.tar.gz" "$TMP_DIR/runtime.sha256"
 
 echo -e "  Распаковка файлов в $INSTALL_DIR..."
 tar -xzf "$TMP_DIR/app.tar.gz" -C "$TMP_DIR"
@@ -186,7 +155,9 @@ if [ -f "$INSTALL_DIR/data/profiles.json" ]; then
 fi
 
 # Копируем проект
-cp -rf "$SRC_EXTRACTED"/* "$INSTALL_DIR"/
+cp "$SRC_EXTRACTED/server.js" "$SRC_EXTRACTED/package.json" "$INSTALL_DIR"/
+cp -Rf "$SRC_EXTRACTED/lib" "$SRC_EXTRACTED/public" "$INSTALL_DIR"/
+node -e 'require(process.argv[1]+"/lib/storage").cleanupLegacy(process.argv[1])' "$INSTALL_DIR"
 
 # Восстанавливаем бэкап профилей если был
 if [ -f "$TMP_DIR/profiles_backup.json" ]; then
