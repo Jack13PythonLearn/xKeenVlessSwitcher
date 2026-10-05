@@ -3526,7 +3526,7 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="url"]:focus, i
 .country-flag { display: inline-block; width: 25px; height: 19px; flex: 0 0 25px; background-size: cover; background-position: center; border-radius: 3px; box-shadow: 0 0 0 1px rgba(128,128,128,.18); }
 .connection-lte-badge { font-size: 10px; padding: 2px 5px; border-radius: 5px; color: #265ed7; background: rgba(38, 94, 215,.16); flex-shrink: 0; }
 .connection-row .ping-badge { padding: 0; border: 0; background: transparent; font-size: 12px; white-space: normal; }
-.connection-row .btn-activate { padding: 8px 10px; min-height: 34px; font-size: 12px; box-shadow: none; }
+.connection-row .connection-activation.btn { padding: 8px 10px; min-height: 34px; min-width: 0; max-width: 100%; font-size: 12px; line-height: 1.25; white-space: normal; overflow-wrap: anywhere; justify-content: center; box-shadow: none; }
 .connection-active-label { color: var(--accent-green); text-align: center; font-size: 12px; font-weight: 600; }
 .connection-row .conn-footer-actions { display: flex; gap: 4px; justify-content: flex-end; }
 .connection-row .btn-icon { width: 34px; height: 34px; min-width: 34px; padding: 0; border-color: transparent; background: transparent; }
@@ -3544,7 +3544,7 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="url"]:focus, i
  .connection-ping-heading { text-align: right; }
  .connection-row .conn-title { grid-column: 1; grid-row: 1; }
  .connection-row .ping-status-wrap { grid-column: 2; grid-row: 1; text-align: right; justify-content: flex-end; }
- .connection-row .btn-activate, .connection-active-label { grid-column: 1; grid-row: 2; justify-self: start; }
+ .connection-row .connection-activation { grid-column: 1; grid-row: 2; justify-self: start; }
  .connection-row .conn-footer-actions { grid-column: 2; grid-row: 2; }
  .connection-row .conn-title { flex-wrap: wrap; }
 }
@@ -3552,11 +3552,11 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="url"]:focus, i
  .connection-row, .connection-group-heading { padding: 12px; }
  .connection-row .conn-footer-actions { gap: 0; }
  .connection-row .btn-icon { width: 30px; min-width: 30px; }
- .connection-row .btn-activate { font-size: 11px; padding: 8px; }
+ .connection-row .connection-activation.btn { font-size: 11px; padding: 8px; }
 }
 @media(pointer:coarse) {
  .connection-row .btn-icon { width: 44px; height: 44px; min-width: 44px; }
- .connection-row .btn-activate { min-height: 44px; }
+ .connection-row .connection-activation.btn { min-height: 44px; }
  .connection-type-select { min-height: 44px; font-size: 16px; }
 }
 @media(pointer:coarse) and (max-width:560px) {
