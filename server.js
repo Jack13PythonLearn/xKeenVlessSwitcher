@@ -1421,18 +1421,7 @@ async function validateTargetFiles(files) {
   for (const file of files) parseJsonWithComments(file.content);
   const binary = findXrayPath();
   if (!binary) return; // Developer/test environments do not have Xray.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xkeen-validate-'));
-  try {
-    const parents = [...new Set(files.map(f=>path.dirname(f.path)))];
-    for (const parent of parents) if (fs.existsSync(parent)) {
-      for (const name of fs.readdirSync(parent).filter(n=>n.endsWith('.json'))) {
-        fs.copyFileSync(path.join(parent,name),path.join(dir,name));
-        fs.chmodSync(path.join(dir,name),0o600);
-      }
-    }
-    for (const file of files) fs.writeFileSync(path.join(dir,path.basename(file.path)),file.content,{mode:0o600});
-    await new Promise((resolve,reject)=>require('child_process').execFile(binary,['run','-test','-confdir',dir],{timeout:10000},error=>error?reject(Error('Xray отклонил конфигурацию.')):resolve()));
-  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+  await require('./lib/xray-validation').validateXrayFiles(files, binary);
 }
 async function restartChecked(command,statusCommand) {
   if (!command?.trim()) return;
