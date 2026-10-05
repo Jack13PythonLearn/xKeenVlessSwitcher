@@ -1,6 +1,6 @@
 # xKeenVlessSwitcher
 
-Веб-панель для управления XKeen на роутерах с Entware. Версия — **2.2.4**.
+Веб-панель для управления XKeen на роутерах с Entware. Версия — **2.2.5**.
 
 - Компактный список подключений: флаги, пинг, активация и фильтр LTE / обычные серверы.
 - Импорт подписок VLESS и Hysteria2, обновление по расписанию, трафик и срок действия.
@@ -73,14 +73,16 @@ XKeen/Xray установщик не устанавливает и его кон
 curl -fsSL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/install.sh -o /opt/tmp/xkeen-vless-switcher-install.sh && /opt/bin/sh /opt/tmp/xkeen-vless-switcher-install.sh
 ```
 
-**Через веб-интерфейс:** нажмите номер версии внизу панели, просмотрите изменения и нажмите «Установить». В версии 2.2.4 этот способ требует GitHub-токен даже для публичного репозитория. [Настройка токена и откат](docs/UPGRADE-2.2.1.md).
+**Через веб-интерфейс, без токена:** нажмите номер версии внизу панели, просмотрите изменения и нажмите «Установить». Панель проверит файлы, сохранит копию кода и перезапустится. При ошибке запуска выполнится автоматический откат.
+
+Если установлена версия 2.2.4 или старше и панель требует токен, один раз обновитесь командой SSH выше. Начиная с 2.2.5 публичный репозиторий доступен без токена. [Подробности и восстановление](docs/UPGRADE-2.2.1.md).
 
 ## Удаление
 
 В SSH-сессии Entware выполните:
 
 ```sh
-/opt/bin/sh /opt/etc/xkeen-switcher/uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitcher/main/uninstall.sh -o /opt/tmp/xkeen-vless-switcher-uninstall.sh && /opt/bin/sh /opt/tmp/xkeen-vless-switcher-uninstall.sh
 ```
 
 Скрипт остановит панель и удалит её службу автозапуска. На вопрос об удалении файлов ответьте `y`, чтобы удалить панель вместе с подключениями, подписками и настройками, или `n`, чтобы оставить файлы. Если данные нужны, заранее скачайте резервную копию.
@@ -96,6 +98,6 @@ curl -fsSL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitche
 
 ## Изменения и проверка
 
-[История изменений](CHANGELOG.md). Автоматические тесты: `npm test` — 89 тестов. [Результаты и ограничения проверки 2.2.4](docs/TESTING-2.2.4.md).
+[История изменений](CHANGELOG.md). Автоматические тесты: `npm test` — 92 теста. [Результаты и ограничения проверки 2.2.5](docs/TESTING-2.2.5.md).
 
 Основано на [XKeenSwitcher](https://github.com/sergey1900/XKeenSwitcher). Лицензия флагов: [MIT](public/flags-LICENSE.txt).
