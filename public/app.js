@@ -1407,6 +1407,8 @@ function switchSettingsTab(tab) {
   if (contentAutoFailover) contentAutoFailover.classList.toggle('hidden', !isAutoFailover);
   if (contentBackup) contentBackup.classList.toggle('hidden', !isBackup);
   if (contentFailover) contentFailover.classList.toggle('hidden', !isFailover);
+  const body = document.getElementById('settings-tab-body');
+  if (body) body.scrollTop = 0;
 
   if (isAutoFailover) {
     populateAutoFailoverForm();

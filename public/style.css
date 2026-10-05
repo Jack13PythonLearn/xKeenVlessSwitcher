@@ -3674,3 +3674,32 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
 .custom-switch input:checked + .custom-slider { background-color: var(--accent-primary); border-color: var(--accent-primary); }
 .custom-switch input:focus-visible + .custom-slider { outline: 2px solid var(--accent-primary); outline-offset: 3px; }
 @media(prefers-reduced-motion:reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* Keep Settings navigation fixed while only the selected panel scrolls. */
+#settings-modal .modal-card {
+  display: flex;
+  flex-direction: column;
+  height: min(900px, calc(100vh - 40px));
+  height: min(900px, calc(100dvh - 40px));
+  max-height: none;
+  overflow: hidden;
+}
+#settings-modal .modal-header,
+#settings-modal .settings-nav-tabs { flex-shrink: 0; }
+#settings-modal .settings-nav-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#settings-modal .settings-tab-btn { min-width: 0; min-height: 44px; }
+.settings-tab-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+@media (max-width: 480px) {
+  #settings-modal .modal-card {
+    height: calc(100vh - 24px);
+    height: calc(100dvh - 24px);
+  }
+  #settings-modal .settings-tab-btn { flex-direction: column; gap: 4px; padding: 8px 4px; }
+}
