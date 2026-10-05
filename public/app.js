@@ -222,6 +222,7 @@ function formatNetworkName(net) {
 
 let connectionTypeFilter = 'all';
 const expandedConnections = new Set();
+let activatingConnectionId = null;
 function isLteConnection(conn) {
   return /(?:^|[^a-zа-я])(?:lte|лте)(?=$|[^a-zа-я])/iu.test(String(conn.subscriptionName || '') + ' ' + String(conn.name || ''));
 }
@@ -258,6 +259,22 @@ function renderConnections() {
     return;
   }
   connectionsGrid.innerHTML = list.map((conn, index) => {
+    const lte = isLteConnection(conn);
+    const heading = index === 0 || lte !== isLteConnection(list[index - 1]) ? '<div class="connection-group-heading" data-group="' + (lte ? 'lte' : 'regular') + '"><h3>' + (lte ? 'LTE-серверы' : 'Обычные серверы') + '</h3><span class="connection-ping-heading">Пинг</span></div>' : '';
+    return heading + connectionRowHtml(conn, activeId);
+  }).join('');
+}
+
+function connectionActivationHtml(conn, isActive) {
+  const busy = activatingConnectionId === conn.id;
+  const disabled = activatingConnectionId ? 'disabled' : '';
+  if (busy) return '<button class="btn btn-activate connection-activation" disabled aria-busy="true">Переключение…</button>';
+  if (isActive && !conn.requiresActivation) return '<span class="connection-active-label connection-activation">✓ Активно</span>';
+  return '<button class="btn ' + (conn.requiresActivation ? 'btn-secondary' : 'btn-activate') + ' connection-activation" ' + disabled + ' onclick="activateConnection(\'' + conn.id + '\')">' +
+    (conn.requiresActivation ? 'Применить обновление' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Активировать') + '</button>';
+}
+
+function connectionRowHtml(conn, activeId) {
     const isActive = conn.id === activeId;
     const isChecking = pingingConnectionIds.has(conn.id);
     // Security & SNI
@@ -324,12 +341,11 @@ function renderConnections() {
     const display = getConnectionDisplay(conn);
     const flagHtml = display.countryCode && /^[A-Z]{2}$/.test(display.countryCode) ? '<span class="country-flag country-flag-' + display.countryCode.toLowerCase() + '" role="img" aria-label="' + escapeHtml(display.countryTitle) + '"></span>' : '';
     const lte = isLteConnection(conn);
-    const heading = index === 0 || lte !== isLteConnection(list[index - 1]) ? '<div class="connection-group-heading"><h3>' + (lte ? 'LTE-серверы' : 'Обычные серверы') + '</h3><span class="connection-ping-heading">Пинг</span></div>' : '';
     const detailsOpen = expandedConnections.has(conn.id);
-    return `${heading}<article class="connection-row ${isActive ? 'active-conn' : ''}" id="card-conn-${conn.id}">
+    return `<article class="connection-row ${isActive ? 'active-conn' : ''}" id="card-conn-${conn.id}">
       <h3 class="conn-title">${flagHtml}<span class="conn-name" title="${escapeHtml(display.name)}">${escapeHtml(display.name)}</span>${lte && !/(?:^|[^a-zа-я])(?:lte|лте)(?=$|[^a-zа-я])/iu.test(display.name) ? '<span class="connection-lte-badge">LTE</span>' : ''}</h3>
       <div class="ping-status-wrap">${pingHtml}</div>
-      ${conn.requiresActivation ? `<button class="btn btn-secondary" onclick="activateConnection('${conn.id}')">Применить обновление</button>` : isActive ? '<span class="connection-active-label">✓ Активно</span>' : `<button class="btn btn-activate" onclick="activateConnection('${conn.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Активировать</button>`}
+      ${connectionActivationHtml(conn, isActive)}
                 <div class="conn-footer-actions"><button class="btn btn-secondary btn-sm btn-icon" onclick="checkConnectionPing('${conn.id}')" ${isChecking ? 'disabled' : ''} title="Проверить доступность подключения" aria-label="Проверить доступность подключения"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></button>
             <button class="btn btn-secondary btn-sm btn-icon" onclick="openQrModal('${conn.id}')" title="Показать QR-код подключения">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M7 17h.01M17 17h.01M7 7h.01M17 7h.01"/></svg>
@@ -364,7 +380,46 @@ function renderConnections() {
       </div>
       ${conn.subscriptionMissing ? '<p class="connection-missing">Сервер исчез из подписки; сохранён для проверки.</p>' : ''}
     </article>`;
-  }).join('');
+
+}
+
+// Patch only the changed row; keep expanded details and their focused controls.
+function updateConnectionRow(id) {
+  const conn = appData.connections.find(c => c.id === id);
+  const row = document.getElementById('card-conn-' + id);
+  if (!conn || !row) return;
+  const template = document.createElement('template');
+  template.innerHTML = connectionRowHtml(conn, appData.settings.activeConnectionId);
+  const next = template.content.firstElementChild;
+  row.className = next.className;
+  for (const selector of ['.conn-title', '.ping-status-wrap', '.connection-activation']) {
+    const current = row.querySelector(selector);
+    const replacement = next.querySelector(selector);
+    if (current && replacement && current.outerHTML !== replacement.outerHTML) current.replaceWith(replacement);
+  }
+  const check = row.querySelector('[onclick^="checkConnectionPing("]');
+  if (check) check.disabled = pingingConnectionIds.has(id);
+}
+
+function updateActivationButtons() {
+  if (!connectionsGrid) return;
+  for (const button of connectionsGrid.querySelectorAll('button.connection-activation')) button.disabled = !!activatingConnectionId;
+}
+
+// Preserve row nodes, focus and expanded details when active/ping sorting changes.
+function reorderConnectionRows() {
+  if (!connectionsGrid || !['active', 'ping'].includes(currentSort)) return;
+  const sorted = getSortedConnections(filterConnections(appData.connections), appData.settings.activeConnectionId);
+  for (const type of ['lte', 'regular']) {
+    let previous = connectionsGrid.querySelector('[data-group="' + type + '"]');
+    if (!previous) continue;
+    for (const conn of sorted.filter(c => isLteConnection(c) === (type === 'lte'))) {
+      const row = document.getElementById('card-conn-' + conn.id);
+      if (!row) continue;
+      if (previous.nextElementSibling !== row) previous.after(row);
+      previous = row;
+    }
+  }
 }
 
 // Render Routings Grid
@@ -752,6 +807,11 @@ async function changeConnectionRouting(connId, routingId) {
 
 // Activate Connection
 async function activateConnection(id) {
+  if (activatingConnectionId) return;
+  activatingConnectionId = id;
+  updateConnectionRow(id);
+  updateActivationButtons();
+  let activated = false;
   try {
     showToast('Активация подключения и перезапуск XKeen...', 'info');
     const res = await fetch(`/api/connections/${id}/activate`, {
@@ -762,12 +822,29 @@ async function activateConnection(id) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Ошибка активации подключения');
 
-    showToast(data.message || 'Подключение активировано!', 'success');
-    await loadData();
-    pollServiceStatus();
+    const previousId = appData.settings.activeConnectionId;
+    ++dataLoadSequence; // Ignore full-data responses started before this activation.
+    appData.settings.activeConnectionId = data.activeConnectionId;
+    const conn = appData.connections.find(c => c.id === id);
+    if (conn) delete conn.requiresActivation;
+    activatingConnectionId = null;
+    updateConnectionRow(previousId);
+    updateConnectionRow(id);
+    reorderConnectionRows();
+    renderRoutings();
+    if (data.serviceStatus) updateServiceStatusUI(data.serviceStatus);
+    const duration = Number.isFinite(data.timings?.totalMs) ? ` (${(data.timings.totalMs / 1000).toFixed(1)} с)` : '';
+    showToast((data.message || 'Подключение активировано!') + duration, 'success');
+    activated = true;
   } catch (err) {
     showToast(err.message, 'error');
+    await loadData(); // Reconcile state after a failed request or a lost response.
+  } finally {
+    activatingConnectionId = null;
+    updateConnectionRow(id);
+    updateActivationButtons();
   }
+  if (activated) void checkConnectionPing(id, { quiet: true });
 }
 
 // Delete Connection
@@ -940,10 +1017,11 @@ function copyQrUrl() {
 // ==============================================================================
 
 // Check single connection ping
-async function checkConnectionPing(id) {
+async function checkConnectionPing(id, { quiet = false } = {}) {
   if (pingingConnectionIds.has(id) || isPingingAll) return;
+  const checkedContent = appData.connections.find(c => c.id === id)?.outboundContent;
   pingingConnectionIds.add(id);
-  renderConnections();
+  updateConnectionRow(id);
 
   try {
     const res = await fetch(`/api/connections/${id}/ping`, {
@@ -953,6 +1031,7 @@ async function checkConnectionPing(id) {
     if (!res.ok) throw new Error(data.error || 'Ошибка проверки');
 
     const conn = appData.connections.find(c => c.id === id);
+    if (!conn || conn.outboundContent !== checkedContent) return;
     if (conn) {
       conn.lastPing = data.ping;
       conn.lastPingStatus = data.status;
@@ -963,6 +1042,7 @@ async function checkConnectionPing(id) {
       if (data.countryName) conn.countryName = data.countryName;
     }
 
+    if (quiet) return;
     if (data.status === 'ok') {
       const proxyNote = data.checkType === 'proxy' ? ' (туннель подтверждён)' : '';
       showToast(`Подключение доступно! Пинг: ${data.latencyStr}${proxyNote}`, 'success');
@@ -971,10 +1051,11 @@ async function checkConnectionPing(id) {
       showToast(`Подключение недоступно${reason}`, 'error');
     }
   } catch (err) {
-    showToast(err.message, 'error');
+    if (!quiet) showToast(err.message, 'error');
   } finally {
     pingingConnectionIds.delete(id);
-    renderConnections();
+    updateConnectionRow(id);
+    reorderConnectionRows();
   }
 }
 

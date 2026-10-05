@@ -1423,13 +1423,22 @@ async function validateTargetFiles(files) {
   if (!binary) return; // Developer/test environments do not have Xray.
   await require('./lib/xray-validation').validateXrayFiles(files, binary);
 }
-async function restartChecked(command,statusCommand) {
+async function restartChecked(command,statusCommand,timings={}) {
   if (!command?.trim()) return;
+  const started = performance.now();
   const result = await runShellCommand(command.trim());
+  timings.restartCommandMs = Math.round(performance.now() - started);
   if (result.code !== 0 || result.error) throw Error('Служба не перезапустилась.');
-  if(statusCommand?.trim() && evaluateServiceStatus(await runShellCommand(statusCommand.trim()))!=='running') throw Error('Служба не подтвердила запуск.');
+  if(statusCommand?.trim()) {
+    const statusStarted = performance.now();
+    const status = evaluateServiceStatus(await runShellCommand(statusCommand.trim()));
+    timings.statusMs = Math.round(performance.now() - statusStarted);
+    if(status !== 'running') throw Error('Служба не подтвердила запуск.');
+  }
 }
 async function activateConnectionInternal(connId, data, updateActiveState = true, extraGuard = () => {}) {
+  const started = performance.now();
+  const timings = {};
   const generation = automationGeneration;
   const baseline = dataSnapshots.get(data) || loadData();
   const expectedActive = baseline.settings.activeConnectionId;
@@ -1438,16 +1447,18 @@ async function activateConnectionInternal(connId, data, updateActiveState = true
   if (!conn) throw Error('Подключение не найдено');
   const routing = data.routings.find(r=>r.id===conn.routingId) || SYSTEM_ROUTING_ALL_VPN;
   return applyQueue(async()=>{
+    timings.queueMs = Math.round(performance.now() - started);
     const guard = () => {
       extraGuard();
       const latest=loadData(), candidate=latest.connections.find(c=>c.id===connId);
       if (isUpdatingApp || generation!==automationGeneration || latest.settings.activeConnectionId!==expectedActive || candidate?.outboundContent!==expectedConn?.outboundContent || candidate?.routingId!==expectedConn?.routingId || JSON.stringify(latest.routings)!==JSON.stringify(baseline.routings)) throw Error('Настройки изменились. Операция отменена.');
     };
-    await applyFiles({files:[{path:data.settings.outboundPath,content:conn.outboundContent},{path:data.settings.routingPath,content:routing.content}],guard,validate:validateTargetFiles,restart:()=>restartChecked(data.settings.restartCommand,data.settings.statusCommand),persist:()=>{
+    await applyFiles({timings,files:[{path:data.settings.outboundPath,content:conn.outboundContent},{path:data.settings.routingPath,content:routing.content}],guard,validate:validateTargetFiles,restart:()=>restartChecked(data.settings.restartCommand,data.settings.statusCommand,timings),persist:()=>{
       if(updateActiveState) {data.settings.activeConnectionId=connId;delete conn.requiresActivation;saveData(data);}
     }});
     lastServiceStatus={status:'running',output:'Конфигурация применена',error:'',code:0,timestamp:new Date().toISOString()};
-    return {conn,routing,fileWriteStatus:{outbound:true,routing:true,error:null},restartStatus:{executed:!!data.settings.restartCommand,output:'',error:''},serviceStatus:lastServiceStatus};
+    timings.totalMs = Math.round(performance.now() - started);
+    return {conn,routing,timings,fileWriteStatus:{outbound:true,routing:true,error:null},restartStatus:{executed:!!data.settings.restartCommand,output:'',error:''},serviceStatus:lastServiceStatus};
   });
 }
 
@@ -2354,25 +2365,13 @@ async function handleRequest(req, res) {
     return sendJson(res, 200, { message: 'Подключение удалено' });
   }
 
-  // POST /api/connections/:id/activate - Activate connection with immediate ping check
+  // Return after validated restart; the UI requests a separate background health check.
   if (urlParts.startsWith('/api/connections/') && urlParts.endsWith('/activate') && req.method === 'POST') {
     const id = urlParts.replace('/api/connections/', '').replace('/activate', '');
     const data = loadData();
 
     try {
       const result = await activateConnectionInternal(id, data, true);
-
-      // Wait a moment for Xray to bind and establish tunnel
-      await sleep(1200);
-
-      // Measure connectivity right away
-      const conn = result.conn;
-      const pingRes = await measureConnectionHealth(conn, { timeout: 3500 });
-      conn.lastPing = pingRes.ok ? pingRes.latency : null;
-      conn.lastPingStatus = pingRes.ok ? 'ok' : 'unreachable';
-      conn.lastPingError = pingRes.error || null;
-      conn.lastPingType = pingRes.checkType || 'tcp';
-      conn.lastPingCheckedAt = new Date().toISOString();
 
       // Update failover state if manual activation occurs
       if (data.settings.failover && data.settings.failover.enabled) {
@@ -2424,14 +2423,7 @@ async function handleRequest(req, res) {
         fileWriteStatus: result.fileWriteStatus,
         restartStatus: result.restartStatus,
         serviceStatus: result.serviceStatus,
-        pingResult: {
-          ok: pingRes.ok,
-          ping: conn.lastPing,
-          status: conn.lastPingStatus,
-          checkType: conn.lastPingType,
-          error: conn.lastPingError,
-          latencyStr: pingRes.ok ? `${conn.lastPing} ms` : 'Недоступен'
-        }
+        timings: result.timings
       });
     } catch (err) {
       return sendJson(res, 400, { error: err.message || 'Ошибка активации подключения' });
