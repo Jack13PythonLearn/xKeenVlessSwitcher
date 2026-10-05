@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>xKeenVlessSwitcher — подключения и подписки</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <meta name="theme-color" content="#080c14">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2.3.0">
+  <meta name="theme-color" content="#f4f6fa">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=2.2.5">
-  <link rel="stylesheet" href="/flags.css?v=2.2.5">
+  <link rel="stylesheet" href="style.css?v=2.3.0">
+  <link rel="stylesheet" href="/flags.css?v=2.3.0">
 </head>
 <body>
   <div class="app-background"></div>
@@ -20,45 +20,12 @@
     <header class="main-header">
       <div class="brand">
         <div class="logo-icon">
-          <svg width="32" height="32" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="headerTopArrowGrad" x1="12" y1="12" x2="52" y2="32" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stop-color="#818cf8" />
-                <stop offset="100%" stop-color="#22d3ee" />
-              </linearGradient>
-              <linearGradient id="headerBottomArrowGrad" x1="52" y1="52" x2="12" y2="32" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stop-color="#06b6d4" />
-                <stop offset="100%" stop-color="#6366f1" />
-              </linearGradient>
-              <radialGradient id="headerCoreGlow" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stop-color="#ffffff" />
-                <stop offset="35%" stop-color="#38bdf8" stop-opacity="0.95" />
-                <stop offset="70%" stop-color="#06b6d4" stop-opacity="0.5" />
-                <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.5" />
-              </radialGradient>
-              <filter id="headerGlow" x="-30%" y="-30%" width="160%" height="160%">
-                <feGaussianBlur stdDeviation="1.8" result="blur" />
-                <feComposite in="SourceGraphic" in2="blur" operator="over" />
-              </filter>
-            </defs>
-            <circle cx="32" cy="32" r="27" stroke="#6366f1" stroke-width="1.8" stroke-opacity="0.4" stroke-dasharray="3 3.5" />
-            <g filter="url(#headerGlow)">
-              <path d="M 14 32 A 18 18 0 0 1 45 16" stroke="url(#headerTopArrowGrad)" stroke-width="4.5" stroke-linecap="round" />
-              <polygon points="43,9 54,18 41,24" fill="#22d3ee" />
-            </g>
-            <g filter="url(#headerGlow)">
-              <path d="M 50 32 A 18 18 0 0 1 19 48" stroke="url(#headerBottomArrowGrad)" stroke-width="4.5" stroke-linecap="round" />
-              <polygon points="21,55 10,46 23,40" fill="#22d3ee" />
-            </g>
-            <circle cx="32" cy="32" r="9" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.35" />
-            <circle cx="32" cy="32" r="8" fill="url(#headerCoreGlow)" />
-            <circle cx="32" cy="32" r="3.5" fill="#ffffff" />
-          </svg>
+          <img src="favicon.svg?v=2.3.0" width="44" height="44" alt="">
         </div>
         <div>
           <div class="brand-title-row">
             <h1>xKeenVlessSwitcher</h1>
-            <span class="version-tag" id="header-version">v2.2.5</span>
+            <span class="version-tag" id="header-version">v2.3.0</span>
           </div>
           <p class="subtitle">Управление подключениями XKeen на роутерах Keenetic</p>
         </div>
@@ -359,7 +326,7 @@
     <footer class="bottom-bar glass-card footer-centered">
       <div class="footer-content">
         <button type="button" class="app-version-badge" id="app-version-badge" title="Проверить обновления на GitHub" aria-label="Проверить обновления на GitHub" onclick="checkAppUpdate()">
-          <span id="app-version-text">v2.2.5</span>
+          <span id="app-version-text">v2.3.0</span>
         </button>
         <div id="app-update-group" class="app-update-group hidden">
           <a id="app-update-badge" class="app-update-badge" href="https://github.com/Jack13PythonLearn/xKeenVlessSwitcher/releases" target="_blank" rel="noopener noreferrer" title="Нажмите, чтобы открыть страницу релиза на GitHub">
@@ -1101,7 +1068,7 @@
   <div id="toast-container"></div>
 
   <script src="qrcode.min.js"></script>
-  <script src="app.js?v=2.2.5"></script>
-  <script src="subscriptions.js?v=2.2.5"></script>
+  <script src="app.js?v=2.3.0"></script>
+  <script src="subscriptions.js?v=2.3.0"></script>
 </body>
 </html>

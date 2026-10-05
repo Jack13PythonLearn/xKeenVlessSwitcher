@@ -1613,7 +1613,7 @@ async function loadFailoverHistoryUI() {
     }).join('');
   } catch (err) {
     if (listEl) {
-      listEl.innerHTML = `<div class="fo-history-empty" style="color:#ef4444">Не удалось загрузить журнал: ${escapeHtml(err.message)}</div>`;
+      listEl.innerHTML = `<div class="fo-history-empty" style="color:var(--accent-danger)">Не удалось загрузить журнал: ${escapeHtml(err.message)}</div>`;
     }
   }
 }
@@ -1998,7 +1998,7 @@ async function loadAutoFailoverHistoryUI() {
     }).join('');
   } catch (err) {
     if (listEl) {
-      listEl.innerHTML = `<div class="fo-history-empty" style="color:#ef4444">Не удалось загрузить журнал: ${escapeHtml(err.message)}</div>`;
+      listEl.innerHTML = `<div class="fo-history-empty" style="color:var(--accent-danger)">Не удалось загрузить журнал: ${escapeHtml(err.message)}</div>`;
     }
   }
 }
@@ -2698,10 +2698,10 @@ function setUpdateStepState(stepId, state, statusText, newDesc) {
     if (statusEl) statusEl.innerHTML = '<span class="spin-icon">🔄</span>';
   } else if (state === 'done') {
     el.classList.add('step-done');
-    if (statusEl) statusEl.innerHTML = '<span style="color: #22c55e; font-weight: bold;">✓</span>';
+    if (statusEl) statusEl.innerHTML = '<span style="color: var(--accent-green); font-weight: bold;">✓</span>';
   } else if (state === 'failed') {
     el.classList.add('step-failed');
-    if (statusEl) statusEl.innerHTML = '<span style="color: #ef4444; font-weight: bold;">✕</span>';
+    if (statusEl) statusEl.innerHTML = '<span style="color: var(--accent-danger); font-weight: bold;">✕</span>';
   }
 
   if (newDesc) {
