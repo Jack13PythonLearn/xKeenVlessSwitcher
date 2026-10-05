@@ -1,6 +1,6 @@
 # xKeenVlessSwitcher
 
-Веб-панель для управления XKeen на роутерах с Entware. Версия — **2.3.0**.
+Веб-панель для управления XKeen на роутерах с Entware. Версия — **2.3.1**.
 
 Светлая тема «Фарфор», компактные списки и новая иконка «Переключатель».
 
@@ -96,6 +96,6 @@ curl -fsSL https://raw.githubusercontent.com/Jack13PythonLearn/xKeenVlessSwitche
 
 ## Изменения и проверка
 
-[История изменений](CHANGELOG.md). Автоматические тесты: `npm test` — 92 теста. [Результаты проверки 2.3.0](docs/TESTING-2.3.0.md).
+[История изменений](CHANGELOG.md). Автоматические тесты: `npm test` — 97 тестов. [Результаты проверки 2.3.1](docs/TESTING-2.3.1.md).
 
 Основано на [XKeenSwitcher](https://github.com/sergey1900/XKeenSwitcher). Лицензия флагов: [MIT](public/flags-LICENSE.txt).

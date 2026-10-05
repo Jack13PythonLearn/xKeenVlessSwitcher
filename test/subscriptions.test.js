@@ -96,6 +96,32 @@ test('new nodes inherit the chosen routing and provider renames propagate', () =
   reconcile(state, 's', parse(vless('vpn.example.com', 'Новое имя')));
   assert.equal(state.connections[0].name, 'Новое имя');
 });
+
+test('legacy Default adopts provider name without duplicating or changing the active connection', () => {
+  const state=data(); const node=parse(vless()).nodes[0];
+  state.connections=[{...node,id:'conn_default_123',name:'Default',routingId:'custom'}];
+  state.settings.activeConnectionId='conn_default_123';
+  reconcile(state,'s',parse(vless('vpn.example.com','🇩🇪 Германия #2')));
+  assert.equal(state.connections.length,1);
+  assert.equal(state.connections[0].name,'🇩🇪 Германия #2');
+  assert.equal(state.settings.activeConnectionId,'conn_default_123');
+  assert.equal(state.connections[0].routingId,'custom');
+});
+
+test('legacy Default is repaired on load but custom names and manually named Default are preserved', () => {
+  const {connectionName}=require('../lib/connection-name');
+  const conn={id:'conn_default_123',name:'Default',subscriptionId:'s',subscriptionName:'🇩🇪 Германия #2',outboundContent:'{}'};
+  assert.equal(connectionName({...conn,name:'Мой сервер'}),'Мой сервер');
+  assert.equal(connectionName({...conn,id:'manual'}),'Default');
+  assert.equal(connectionName({...conn,subscriptionId:null}),'Default');
+  assert.equal(connectionName({...conn,subscriptionName:''}),'Default');
+  const saved=loadData(); saved.connections=[conn]; saved.settings.activeConnectionId=conn.id;
+  saveData(saved);
+  const loaded=loadData();
+  assert.equal(loaded.connections[0].name,'🇩🇪 Германия #2');
+  assert.equal(loaded.connections[0].id,conn.id);
+  assert.equal(loaded.settings.activeConnectionId,conn.id);
+});
 test('removed active, failover and manually edited nodes are retained for review', () => {
   const state = data();
   reconcile(state, 's', parse(['a', 'b', 'c', 'd'].map(x => vless(x + '.example.com')).join('\n')));

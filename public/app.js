@@ -15,6 +15,7 @@ let currentTab = 'connections'; // 'connections' | 'routings'
 let currentSort = localStorage.getItem('xkeen_connections_sort') || 'default';
 let pingingConnectionIds = new Set();
 let isPingingAll = false;
+let stopPingRequested = false;
 let servicePollingTimer = null;
 let lastServiceLog = '';
 
@@ -978,9 +979,20 @@ async function checkConnectionPing(id) {
 }
 
 // Check all connections ping sequentially one by one
+function stopAllPing() {
+  if (!isPingingAll || stopPingRequested) return;
+  stopPingRequested = true;
+  const button = document.getElementById('btn-ping-stop');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Останавливается…';
+  }
+  showToast('Завершаем текущую проверку. Следующие серверы проверяться не будут.', 'info');
+}
+
 async function checkAllPing() {
-  if (isPingingAll) return;
-  const list = appData.connections || [];
+  if (isPingingAll || pingingConnectionIds.size) return;
+  const list = [...(appData.connections || [])];
   if (list.length === 0) {
     showToast('Нет подключений для проверки', 'info');
     return;
@@ -988,12 +1000,17 @@ async function checkAllPing() {
 
   const btn = document.getElementById('btn-ping-all');
   const btnText = document.getElementById('btn-ping-all-text');
+  const stopBtn = document.getElementById('btn-ping-stop');
 
   isPingingAll = true;
+  stopPingRequested = false;
+  if (stopBtn) { stopBtn.hidden = false; stopBtn.disabled = false; stopBtn.textContent = 'Остановить'; }
   if (btn) btn.disabled = true;
+  let checked = 0;
 
   try {
     for (let i = 0; i < list.length; i++) {
+      if (stopPingRequested) break;
       const conn = list[i];
       if (btnText) btnText.innerHTML = `<span class="spin-icon">⏳</span> Проверка ${i + 1}/${list.length}...`;
       pingingConnectionIds.add(conn.id);
@@ -1024,16 +1041,19 @@ async function checkAllPing() {
         conn.lastPingError = e.message || 'Ошибка сети';
         conn.lastPingCheckedAt = new Date().toISOString();
       } finally {
+        checked++;
         pingingConnectionIds.delete(conn.id);
         renderConnections();
       }
     }
 
-    showToast('Проверка всех подключений завершена!', 'success');
+    showToast(stopPingRequested ? `Проверка остановлена. Проверено ${checked} из ${list.length}.` : 'Проверка всех подключений завершена!', stopPingRequested ? 'info' : 'success');
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
     isPingingAll = false;
+    stopPingRequested = false;
+    if (stopBtn) { stopBtn.hidden = true; stopBtn.disabled = false; stopBtn.textContent = 'Остановить'; }
     pingingConnectionIds.clear();
     if (btn) btn.disabled = false;
     if (btnText) btnText.textContent = 'Проверить все';

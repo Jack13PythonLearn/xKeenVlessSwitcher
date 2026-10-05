@@ -9,6 +9,7 @@ const zlib = require('zlib');
 const os = require('os');
 const { createSubscriptionManager, publicSubscription, subscriptionUrl } = require('./lib/subscriptions');
 const { mergeChanges } = require('./lib/data-merge');
+const { connectionName } = require('./lib/connection-name');
 const { createRoutingSync, SOURCES: routingSources, v2flyLists: routingSourceLists } = require('./lib/routing-sync');
 const { applyRoutingReplacements } = require('./lib/routing-replacements');
 const dataSnapshots = new WeakMap();
@@ -1329,7 +1330,7 @@ function loadDataRaw() {
           return {
             ...c,
             id: c.id,
-            name: c.name || 'Подключение',
+            name: connectionName(c) || 'Подключение',
             description: c.description || '',
             routingId: c.routingId || 'routing_all_vpn',
             outboundContent: c.outboundContent || '',

@@ -189,6 +189,8 @@ body {
   border-color: rgba(30, 41, 59, 0.2);
 }
 
+#btn-ping-stop[hidden] { display: none; }
+
 .btn-danger {
   background: rgba(239, 68, 68, 0.1);
   color: #a92130;
@@ -2815,6 +2817,10 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="url"]:focus, i
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .section-sort-wrap {
